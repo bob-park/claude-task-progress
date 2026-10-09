@@ -1,6 +1,10 @@
 export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 
-export type Task = { status: TaskStatus; label: string }
+/** `n`: the task's number when its source has one (plan `Task N`, TaskCreate id, `1.` step) */
+export type Task = { status: TaskStatus; label: string; n?: string }
+
+/** A subagent the model spawned, listed under the tasks */
+export type AgentRun = { n: number; label: string; model: string; startedAt: number; endedAt?: number; ok?: boolean }
 
 /** The plan file progress is read from when there are no todos */
 export type Plan = { path: string; tasks: Task[] }
@@ -24,6 +28,6 @@ export type Main = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'task-progress': { tasks: Record<string, Task>; main: Main; plan: Plan }
+    'task-progress': { tasks: Record<string, Task>; main: Main; plan: Plan; agents: Record<string, AgentRun> }
   }
 }

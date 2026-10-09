@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const pane = {
   plugin: 'task-progress',
@@ -10,6 +10,7 @@ const pane = {
 const todo = (content: string, status: 'pending' | 'in_progress' | 'completed') => ({ content, status, activeForm: `${content}ing` })
 
 test('main panel shows idle, then working once a turn starts', async ($, on) => {
+  mock.clock(on)
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /· main$/ })).toBeDefined()
@@ -23,6 +24,7 @@ test('main panel shows idle, then working once a turn starts', async ($, on) => 
 })
 
 test('tasks panel shows done/total next to the bar and the current step below', async ($, on) => {
+  mock.clock(on)
   // stands for the engine answering the tool
   on('tool.call', () => ({ result: { oldTodos: [], newTodos: [] } }) as never)
   const write = (todos: ReturnType<typeof todo>[]) => $.tool.call({ tool: 'TodoWrite', todos })
@@ -56,6 +58,7 @@ const answer = (e: { tool: string }) =>
   ({ result: e.tool === 'ExitPlanMode' ? { plan: null, isAgent: false, filePath: PM } : { oldTodos: [], newTodos: [] } }) as never
 
 test('superpowers plan fills the tasks panel and follows the ledger', async ($, on) => {
+  mock.clock(on)
   const files: Record<string, string> = {
     [SP]: '### Task 1: Parser\n- [ ] a\n### Task 2: Wiring\n- [ ] a\n### Task 3: Docs\n- [ ] a\n',
     [LEDGER]: '# SDD ledger — plan: docs/superpowers/plans/2026-01-01-x.md\nTask 1: complete (x)\n',
@@ -70,7 +73,7 @@ test('superpowers plan fills the tasks panel and follows the ledger', async ($, 
   await $.tool.call({ tool: 'Write', file_path: SP, content: files[SP]! })
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^ 1\/3$/ })).toBeDefined()
-  expect(await ui.find({ text: /^▸ Wiring$/ })).toBeDefined()
+  expect(await ui.find({ text: /^▸ #2 Wiring$/ })).toBeDefined()
   await ui.unmount()
 
   // SDD's task-done script appends from Bash: any later tool call re-reads
@@ -78,6 +81,14 @@ test('superpowers plan fills the tasks panel and follows the ledger', async ($, 
   await $.tool.call({ tool: 'Bash', command: 'true' } as never)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^ 2\/3$/ })).toBeDefined()
+  await ui.unmount()
+
+  // finishing the branch drops the ledger: done tasks stay done
+  delete files[LEDGER]
+  await $.tool.call({ tool: 'Bash', command: 'true' } as never)
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^ 2\/3$/ })).toBeDefined()
+  expect(await ui.find({ text: /^▸ #3 Docs$/ })).toBeDefined()
   await ui.unmount()
 
   // plan gone: keep what we had
@@ -94,6 +105,7 @@ test('superpowers plan fills the tasks panel and follows the ledger', async ($, 
 })
 
 test('plan mode: ExitPlanMode makes its file the active plan and asks Claude to tick steps', async ($, on) => {
+  mock.clock(on)
   on('fs.read', (_$, e) => {
     if (e.path === PM) return { value: '# Plan\n- [x] Read code\n- [ ] Edit file\n' }
     return { deny: `ENOENT: ${e.path}` }
@@ -105,10 +117,11 @@ test('plan mode: ExitPlanMode makes its file the active plan and asks Claude to 
 
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^ 1\/2$/ })).toBeDefined()
-  expect(await ui.find({ text: /^▸ Edit file$/ })).toBeDefined()
+  expect(await ui.find({ text: /^▸ Edit file$/ })).toBeDefined() // checkboxes carry no number
 })
 
 test('reading a plan written in an earlier session makes it the active plan', async ($, on) => {
+  mock.clock(on)
   on('fs.read', (_$, e) => (e.path === SP ? { value: '### Task 1: A\n- [x] a\n### Task 2: B\n- [ ] a\n' } : { deny: `ENOENT: ${e.path}` }))
   on('tool.call', (_$, e) => answer(e))
 
@@ -118,6 +131,7 @@ test('reading a plan written in an earlier session makes it the active plan', as
 })
 
 test('with no todos or plan, a running turn shows what Claude is doing', async ($, on) => {
+  mock.clock(on)
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('tool.call', () => ({ result: {} }) as never)
 
@@ -125,4 +139,42 @@ test('with no todos or plan, a running turn shows what Claude is doing', async (
   await $.tool.call({ tool: 'Bash', command: 'bun test', description: 'Run tests' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Bash · Run tests$/ })).toBeDefined()
+})
+
+test('agents list below the tasks: num, label, model and mm:ss', async ($, on) => {
+  const clock = mock.clock(on)
+  // stands for the engine starting and ending agents
+  on('agent.spawn', (_$, e) => ({ model: 'claude-haiku-5-5', agentId: e.description === 'Explore auth' ? 'A1' : 'A2' }))
+  on('turn.complete', () => ({ text: '' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  const end = (agentId: string) =>
+    $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'T', agentId, reason: 'answer' } as never)
+
+  await $.agent.spawn({ prompt: 'p', description: 'Explore auth' } as never)
+  await clock.advance(41_000)
+  await $.agent.spawn({ prompt: 'p', description: 'Review diff' } as never)
+  await clock.advance(42_000)
+  await end('A1')
+  await clock.advance(5_000)
+
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^AGENTS$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 1: Explore auth -+ Haiku 5\.5 \{01:23\}$/ })).toBeDefined()
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 2: Review diff -+ Haiku 5\.5 \{00:47\}$/ })).toBeDefined()
+  await ui.unmount()
+
+  // a new prompt clears the finished ones
+  await $.turn.start({ text: 'go', turnId: 'T2' })
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /Explore auth/ })).toBeUndefined()
+  expect(await ui.find({ text: /2: Review diff/ })).toBeDefined()
+})
+
+test('a TaskCreate task shows its number on the current line', async ($, on) => {
+  mock.clock(on)
+  on('tool.call', (_$, e) => ({ result: e.tool === 'TaskCreate' ? { task: { id: '7', subject: 'x' } } : {} }) as never)
+  await $.tool.call({ tool: 'TaskCreate', subject: 'Ship', description: 'd' } as never)
+  await $.tool.call({ tool: 'TaskUpdate', taskId: '7', status: 'in_progress' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^▸ #7 Ship$/ })).toBeDefined()
 })

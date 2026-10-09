@@ -2,7 +2,7 @@ import type { Task } from '../types'
 
 const TASK_HEADING = /^###\s+Task\s+(\d+):\s*(.+)$/
 const CHECKBOX = /^\s*[-*]\s+\[([ xX])\]\s+(.+)$/
-const NUMBERED = /^\d+\.\s+(?:\[([ xX])\]\s+)?(.+)$/
+const NUMBERED = /^(\d+)\.\s+(?:\[([ xX])\]\s+)?(.+)$/
 
 const clean = (s: string) => s.replace(/\*\*/g, '').trim()
 
@@ -29,12 +29,22 @@ export const ledgerOwns = (planPath: string, ledger: string) =>
   (ledger.split(/\r?\n/, 1)[0] ?? '').includes(planPath.slice(planPath.lastIndexOf('/') + 1))
 
 /** Done items first get their status; the first open one is current once anything has started */
-const withCurrent = (items: Array<{ label: string; done: boolean }>, started: boolean): Task[] => {
+const withCurrent = (items: Array<{ label: string; done: boolean; n?: string }>, started: boolean): Task[] => {
   const current = items.findIndex(i => !i.done)
-  return items.map((i, n) => ({
-    status: i.done ? 'completed' : started && n === current ? 'in_progress' : 'pending',
+  return items.map((i, k) => ({
+    status: i.done ? 'completed' : started && k === current ? 'in_progress' : 'pending',
     label: i.label,
+    ...(i.n ? { n: i.n } : {}),
   }))
+}
+
+/** Re-read plan keeps what was done: finishing a branch drops the SDD ledger */
+export const keepCompleted = (prev: Task[], next: Task[]): Task[] => {
+  const done = new Set(prev.filter(t => t.status === 'completed').map(t => t.label))
+  return withCurrent(
+    next.map(t => ({ label: t.label, n: t.n, done: t.status === 'completed' || done.has(t.label) })),
+    next.some(t => t.status !== 'pending') || next.some(t => done.has(t.label)),
+  )
 }
 
 export const parsePlan = (text: string, ledger?: string): Task[] => {
@@ -54,7 +64,7 @@ export const parsePlan = (text: string, ledger?: string): Task[] => {
     const logged = new Set([...(ledger ?? '').matchAll(/^Task (\d+): complete/gm)].map(m => m[1]))
     const started = logged.size > 0 || tasks.some(t => t.steps.some(Boolean))
     return withCurrent(
-      tasks.map(t => ({ label: t.label, done: logged.has(t.n) || (t.steps.length > 0 && t.steps.every(Boolean)) })),
+      tasks.map(t => ({ label: t.label, n: t.n, done: logged.has(t.n) || (t.steps.length > 0 && t.steps.every(Boolean)) })),
       started,
     )
   }
@@ -62,6 +72,6 @@ export const parsePlan = (text: string, ledger?: string): Task[] => {
   // plan mode: checkboxes, else top-level numbered items (ticked as `1. [x]`)
   const items = lines.map(l => CHECKBOX.exec(l)).filter(m => m !== null).map(m => ({ label: clean(m[2]!), done: m[1] !== ' ' }))
   if (items.length > 0) return withCurrent(items, items.some(i => i.done))
-  const numbered = lines.map(l => NUMBERED.exec(l)).filter(m => m !== null).map(m => ({ label: clean(m[2]!), done: !!m[1] && m[1] !== ' ' }))
+  const numbered = lines.map(l => NUMBERED.exec(l)).filter(m => m !== null).map(m => ({ label: clean(m[3]!), n: m[1]!, done: !!m[2] && m[2] !== ' ' }))
   return withCurrent(numbered, numbered.some(i => i.done))
 }

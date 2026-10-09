@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Main, Plan, Task } from '../types'
-import { isPlanPath, ledgerOwns, ledgerPath, parsePlan } from './plan'
+import type { AgentRun, Main, Plan, Task } from '../types'
+import { isPlanPath, keepCompleted, ledgerOwns, ledgerPath, parsePlan } from './plan'
 
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {} as Record<string, Task>)
 const plan = atom({ plugin: 'task-progress', key: 'plan' } as const, { path: '', tasks: [] } as Plan)
+const agents = atom({ plugin: 'task-progress', key: 'agents' } as const, {} as Record<string, AgentRun>)
 
 // a failed read keeps what the pane already shows
 const refreshPlan = async ($: EngineInterface, path: string) => {
@@ -14,7 +15,12 @@ const refreshPlan = async ($: EngineInterface, path: string) => {
   const at = ledgerPath(path)
   const ledger = at ? await $.fs.read(at).catch(() => null) : null
   const owned = typeof ledger === 'string' && ledgerOwns(path, ledger) ? ledger : undefined
-  await update($, plan, () => ({ path, tasks: parsePlan(text, owned) }))
+  const base = (p: string) => p.slice(p.lastIndexOf('/') + 1)
+  await update($, plan, prev => {
+    const tasks = parsePlan(text, owned)
+    // same plan (maybe now in the main checkout): done stays done
+    return { path, tasks: prev?.path && base(prev.path) === base(path) ? keepCompleted(prev.tasks, tasks) : tasks }
+  })
 }
 
 const DEFAULT_MAIN: Main = {
@@ -71,10 +77,19 @@ const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 const FRAME_MS = 100
 const frame = () => Math.floor(Date.now() / FRAME_MS)
 let ticker: Timer | undefined
-const animate = ($: EngineInterface, on: boolean) => {
+// the clock runs while the main turn or any agent is working
+const animate = async ($: EngineInterface) => {
+  const [m, a] = await Promise.all([read($, main), read($, agents)])
+  const on = !!m?.isRunning || Object.values(a ?? {}).some(r => r.endedAt === undefined)
   if (on) ticker ??= $.clock.every(FRAME_MS, () => $.ui.invalidate('ui.render'))
   else ticker = void ticker?.cancel()
 }
+
+const mmss = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+const numbered = (t: Task) => (t.n ? `#${t.n} ${t.label}` : t.label)
 
 // `Bash · Run tests`, `Read · plan.ts`: the tool and the most telling input it has
 const activityOf = (e: { tool: string; description?: unknown; file_path?: unknown; pattern?: unknown; command?: unknown }) => {
@@ -110,22 +125,46 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     await setMain($, () => ({ isRunning: true }))
-    animate($, true)
+    // a new prompt clears agents that finished before it
+    await update($, agents, all => Object.fromEntries(Object.entries(all ?? {}).filter(([, r]) => r.endedAt === undefined)))
+    await animate($)
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (!e.agentId) {
-      await setMain($, () => ({ isRunning: false, activity: '' }))
-      animate($, false)
-    }
+    if (e.agentId) {
+      const { agentId } = e
+      const at = await $.clock.now()
+      await update($, agents, all => {
+        const r = all?.[agentId]
+        return r ? { ...all, [agentId]: { ...r, endedAt: at, ok: e.reason === 'answer' } } : all
+      })
+    } else await setMain($, () => ({ isRunning: false, activity: '' }))
+    await animate($)
     return done
   })
 
   on('turn.step', async function* ($, e, next) {
-    if (!e.agentId) await setMain($, m => ({ model: e.model, effort: String(e.effort ?? m.effort), steps: m.steps + 1 }))
+    const { agentId } = e
+    if (!agentId) await setMain($, m => ({ model: e.model, effort: String(e.effort ?? m.effort), steps: m.steps + 1 }))
+    else await update($, agents, all => (all?.[agentId] ? { ...all, [agentId]: { ...all[agentId], model: e.model } } : all))
     return yield* next(e)
+  })
+
+  on('agent.spawn', async ($, e, next) => {
+    const spawned = await next(e)
+    const { agentId, model = '' } = spawned as { agentId?: string; model?: string }
+    if (agentId) {
+      const startedAt = await $.clock.now()
+      // next after the highest still listed: one left running keeps its number
+      await update($, agents, all => ({
+        ...all,
+        [agentId]: { n: Math.max(0, ...Object.values(all ?? {}).map(r => r.n)) + 1, label: e.description || e.subagentType, model, startedAt },
+      }))
+      await animate($)
+    }
+    return spawned
   })
 
   on('session.measure', async ($, e, next) => {
@@ -152,13 +191,13 @@ export const register: Register = on => {
       // next(e) ran before e.tool was narrowed, so result isn't typed per tool
       const id = (ran.result as BuiltinToolResults['TaskCreate'] | undefined)?.task?.id
       const label = e.activeForm || e.subject
-      if (id) await update($, tasks, all => ({ ...all, [id]: { status: 'pending' as const, label } }))
+      if (id) await update($, tasks, all => ({ ...all, [id]: { status: 'pending' as const, label, n: id } }))
     } else if (e.tool === 'TaskUpdate') {
       const { taskId, status, activeForm, subject } = e
       await update($, tasks, all => {
         const { [taskId]: prev, ...rest } = all
         if (status === 'deleted' || !prev) return rest
-        return { ...rest, [taskId]: { status: status ?? prev.status, label: activeForm || subject || prev.label } }
+        return { ...rest, [taskId]: { ...prev, status: status ?? prev.status, label: activeForm || subject || prev.label } }
       })
     }
 
@@ -173,10 +212,12 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [m, todos, p] = await Promise.all([
+    const [m, todos, p, runs, now] = await Promise.all([
       read($, main).then(x => ({ ...DEFAULT_MAIN, ...x })),
       read($, tasks).then(Object.values),
       read($, plan),
+      read($, agents).then(a => Object.values(a ?? {}).sort((x, y) => x.n - y.n)),
+      $.clock.now(),
     ])
     const list = todos.length > 0 ? todos : (p?.tasks ?? [])
     const { Box, Text } = $.ui.resolve(e)
@@ -228,6 +269,27 @@ export const register: Register = on => {
       </Box>
     )
 
+    // ---- agents: `1: label --- Model {mm:ss}`, the right column lined up
+    const agentsPanel =
+      runs.length > 0 ? (
+        <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={W}>
+          <Text color="magenta" bold>AGENTS</Text>
+          {runs.map(r => {
+            const running = r.endedAt === undefined
+            const right = ` ${prettyModel(r.model)} {${mmss((r.endedAt ?? now) - r.startedAt)}}`
+            const room = W - 4 - 2 - right.length - 4 // icon, then ` ---` at the least
+            let left = `${r.n}: ${r.label}`
+            if (left.length > room) left = `${left.slice(0, Math.max(0, room - 1))}…`
+            const icon = running ? spin : r.ok === false ? '✗' : '✓'
+            return (
+              <Text key={String(r.n)} color={running ? 'yellow' : r.ok === false ? 'red' : 'green'} wrap="truncate">
+                {`${icon} ${left} ${'-'.repeat(Math.max(3, room - left.length + 3))}${right}`}
+              </Text>
+            )
+          })}
+        </Box>
+      ) : null
+
     if (list.length === 0) {
       // nothing planned: show what Claude is doing right now
       return (
@@ -238,6 +300,7 @@ export const register: Register = on => {
               <Text color="yellow" wrap="truncate">{`${spin} ${m.activity}`}</Text>
             </Box>
           ) : null}
+          {agentsPanel}
         </Box>
       )
     }
@@ -279,11 +342,12 @@ export const register: Register = on => {
           {allDone ? (
             <Text color="green">✓ 모두 완료</Text>
           ) : active.length > 0 ? (
-            <Text color="yellow" wrap="truncate">{`${m.isRunning ? spin : '▸'} ${active.map(t => t.label).join(', ')}`}</Text>
+            <Text color="yellow" wrap="truncate">{`${m.isRunning ? spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
           ) : (
-            <Text dimColor wrap="truncate">{`○ 다음: ${next?.label ?? '—'}`}</Text>
+            <Text dimColor wrap="truncate">{`○ 다음: ${next ? numbered(next) : '—'}`}</Text>
           )}
         </Box>
+        {agentsPanel}
       </Box>
     )
   })
