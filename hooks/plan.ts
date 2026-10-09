@@ -2,7 +2,7 @@ import type { Task } from '../types'
 
 const TASK_HEADING = /^###\s+Task\s+(\d+):\s*(.+)$/
 const CHECKBOX = /^\s*[-*]\s+\[([ xX])\]\s+(.+)$/
-const NUMBERED = /^\d+\.\s+(.+)$/
+const NUMBERED = /^\d+\.\s+(?:\[([ xX])\]\s+)?(.+)$/
 
 const clean = (s: string) => s.replace(/\*\*/g, '').trim()
 
@@ -59,8 +59,9 @@ export const parsePlan = (text: string, ledger?: string): Task[] => {
     )
   }
 
-  // plan mode: checkboxes, else top-level numbered items
+  // plan mode: checkboxes, else top-level numbered items (ticked as `1. [x]`)
   const items = lines.map(l => CHECKBOX.exec(l)).filter(m => m !== null).map(m => ({ label: clean(m[2]!), done: m[1] !== ' ' }))
   if (items.length > 0) return withCurrent(items, items.some(i => i.done))
-  return lines.map(l => NUMBERED.exec(l)).filter(m => m !== null).map(m => ({ status: 'pending' as const, label: clean(m[1]!) }))
+  const numbered = lines.map(l => NUMBERED.exec(l)).filter(m => m !== null).map(m => ({ label: clean(m[2]!), done: !!m[1] && m[1] !== ' ' }))
+  return withCurrent(numbered, numbered.some(i => i.done))
 }

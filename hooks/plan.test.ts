@@ -69,3 +69,11 @@ test('plan-mode plan without checkboxes falls back to numbered items, else nothi
   ])
   expect(parsePlan('# Plan\nJust prose.')).toEqual([])
 })
+
+test('numbered items ticked with [x] show progress', () => {
+  expect(parsePlan('# Plan\n1. [x] Read code\n2. [ ] **Edit**\n3. Run tests')).toEqual([
+    { status: 'completed', label: 'Read code' },
+    { status: 'in_progress', label: 'Edit' },
+    { status: 'pending', label: 'Run tests' },
+  ])
+})

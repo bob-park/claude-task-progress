@@ -12,6 +12,8 @@ export type Main = {
   mode: string
   steps: number
   isRunning: boolean
+  /** The main loop's latest tool call, shown when there are no tasks */
+  activity: string
   pct: number | null
   tokens: number | null
   window: number

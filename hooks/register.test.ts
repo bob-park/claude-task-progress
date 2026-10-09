@@ -19,7 +19,7 @@ test('main panel shows idle, then working once a turn starts', async ($, on) => 
 
   await $.turn.start({ text: 'go', turnId: 'T1' })
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /● working/ })).toBeDefined()
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] working$/ })).toBeDefined() // spinner while working
 })
 
 test('tasks panel shows done/total next to the bar and the current step below', async ($, on) => {
@@ -101,7 +101,7 @@ test('plan mode: ExitPlanMode makes its file the active plan and asks Claude to 
   on('tool.call', (_$, e) => answer(e))
 
   const ran = await $.tool.call({ tool: 'ExitPlanMode' } as never)
-  expect(ran.context).toEqual([`Mark each step done by ticking it (- [x]) in ${PM} as you finish it.`])
+  expect(ran.context).toEqual([`Mark each step done by ticking it (- [x], or 1. [x] for numbered steps) in ${PM} as you finish it.`])
 
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^ 1\/2$/ })).toBeDefined()
@@ -115,4 +115,14 @@ test('reading a plan written in an earlier session makes it the active plan', as
   await $.tool.call({ tool: 'Read', file_path: SP } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^ 1\/2$/ })).toBeDefined()
+})
+
+test('with no todos or plan, a running turn shows what Claude is doing', async ($, on) => {
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('tool.call', () => ({ result: {} }) as never)
+
+  await $.turn.start({ text: 'go', turnId: 'T1' })
+  await $.tool.call({ tool: 'Bash', command: 'bun test', description: 'Run tests' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Bash · Run tests$/ })).toBeDefined()
 })

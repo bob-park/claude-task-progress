@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { BuiltinToolResults, EngineInterface, Register } from 'claude-code'
+import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Main, Plan, Task } from '../types'
 import { isPlanPath, ledgerOwns, ledgerPath, parsePlan } from './plan'
@@ -23,6 +23,7 @@ const DEFAULT_MAIN: Main = {
   mode: '',
   steps: 0,
   isRunning: false,
+  activity: '',
   pct: null,
   tokens: null,
   window: 0,
@@ -65,6 +66,22 @@ const usageOf = (u: Pick<Usage, 'context' | 'cost' | 'rateLimits'>): Partial<Mai
   limits: u.rateLimits.map(r => ({ kind: r.kind, pct: r.percentUsed })),
 })
 
+// while a turn runs the pane redraws on a clock so the spinner and shimmer move
+const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+const FRAME_MS = 100
+const frame = () => Math.floor(Date.now() / FRAME_MS)
+let ticker: Timer | undefined
+const animate = ($: EngineInterface, on: boolean) => {
+  if (on) ticker ??= $.clock.every(FRAME_MS, () => $.ui.invalidate('ui.render'))
+  else ticker = void ticker?.cancel()
+}
+
+// `Bash · Run tests`, `Read · plan.ts`: the tool and the most telling input it has
+const activityOf = (e: { tool: string; description?: unknown; file_path?: unknown; pattern?: unknown; command?: unknown }) => {
+  const what = [e.description, e.file_path, e.pattern, e.command].find(x => typeof x === 'string' && x) as string | undefined
+  return what ? `${e.tool} · ${what.slice(what.lastIndexOf('/') + 1)}` : e.tool
+}
+
 const openPane = ($: EngineInterface) => $.ui.open({ id: PANE, title: 'Task Progress', columns: PANE_COLUMNS, rows: 8 })
 
 export const register: Register = on => {
@@ -93,12 +110,16 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     await setMain($, () => ({ isRunning: true }))
+    animate($, true)
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (!e.agentId) await setMain($, () => ({ isRunning: false }))
+    if (!e.agentId) {
+      await setMain($, () => ({ isRunning: false, activity: '' }))
+      animate($, false)
+    }
     return done
   })
 
@@ -119,6 +140,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    if (!e.agentId) await setMain($, () => ({ activity: activityOf(e as Parameters<typeof activityOf>[0]) }))
     const ran = await next(e)
     if (ran.deny !== undefined || ran.isError) return ran
 
@@ -147,7 +169,7 @@ export const register: Register = on => {
     const path = planned ?? written ?? (await read($, plan))?.path
     if (path) await refreshPlan($, path)
     if (!planned) return ran
-    return { ...ran, context: [...(ran.context ?? []), `Mark each step done by ticking it (- [x]) in ${planned} as you finish it.`] }
+    return { ...ran, context: [...(ran.context ?? []), `Mark each step done by ticking it (- [x], or 1. [x] for numbered steps) in ${planned} as you finish it.`] }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -159,6 +181,8 @@ export const register: Register = on => {
     const list = todos.length > 0 ? todos : (p?.tasks ?? [])
     const { Box, Text } = $.ui.resolve(e)
     const W = Math.max(30, e.props.bodyColumns)
+    const f = frame()
+    const spin = SPINNER[f % SPINNER.length]
 
     // ---- main (layout from Flightdeck's main panel)
     const effortN = { low: 1, medium: 2, high: 3, xhigh: 4, max: 4 }[m.effort] ?? 0
@@ -167,7 +191,7 @@ export const register: Register = on => {
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} width={W}>
         <Box justifyContent="space-between">
           <Text color="cyan" bold>{`${prettyModel(m.model)} · main`}</Text>
-          <Text color={m.isRunning ? 'cyan' : undefined} dimColor={!m.isRunning}>{m.isRunning ? '● working' : '○ idle'}</Text>
+          <Text color={m.isRunning ? 'cyan' : undefined} dimColor={!m.isRunning}>{m.isRunning ? `${spin} working` : '○ idle'}</Text>
         </Box>
         <Text wrap="truncate">
           <Text dimColor>effort </Text>
@@ -204,7 +228,19 @@ export const register: Register = on => {
       </Box>
     )
 
-    if (list.length === 0) return <Box flexDirection="column">{mainPanel}</Box>
+    if (list.length === 0) {
+      // nothing planned: show what Claude is doing right now
+      return (
+        <Box flexDirection="column">
+          {mainPanel}
+          {m.isRunning && m.activity ? (
+            <Box borderStyle="round" borderColor="yellow" paddingX={1} width={W}>
+              <Text color="yellow" wrap="truncate">{`${spin} ${m.activity}`}</Text>
+            </Box>
+          ) : null}
+        </Box>
+      )
+    }
 
     // ---- tasks
     const total = list.length
@@ -216,6 +252,8 @@ export const register: Register = on => {
     const percent = Math.round((done / total) * 100)
     const allDone = done === total
     const next = list.find(t => t.status === 'pending')
+    // a bright cell sweeps across the in-progress part of the bar while working
+    const sweep = m.isRunning && activeCells > 0 ? f % activeCells : -1
 
     return (
       <Box flexDirection="column">
@@ -225,7 +263,15 @@ export const register: Register = on => {
           {/* count sits right after the bar so the eye doesn't travel */}
           <Text wrap="truncate">
             <Text color="green">{'█'.repeat(filled)}</Text>
-            <Text color="yellow">{'▓'.repeat(activeCells)}</Text>
+            {sweep >= 0 ? (
+              <Text color="yellow">
+                {'▓'.repeat(sweep)}
+                <Text bold>█</Text>
+                {'▓'.repeat(activeCells - sweep - 1)}
+              </Text>
+            ) : (
+              <Text color="yellow">{'▓'.repeat(activeCells)}</Text>
+            )}
             <Text dimColor>{'░'.repeat(barW - filled - activeCells)}</Text>
             <Text bold color="blue">{` ${done}/${total}`}</Text>
             <Text dimColor>{` · ${percent}%`}</Text>
@@ -233,7 +279,7 @@ export const register: Register = on => {
           {allDone ? (
             <Text color="green">✓ 모두 완료</Text>
           ) : active.length > 0 ? (
-            <Text color="yellow" wrap="truncate">{`▸ ${active.map(t => t.label).join(', ')}`}</Text>
+            <Text color="yellow" wrap="truncate">{`${m.isRunning ? spin : '▸'} ${active.map(t => t.label).join(', ')}`}</Text>
           ) : (
             <Text dimColor wrap="truncate">{`○ 다음: ${next?.label ?? '—'}`}</Text>
           )}
