@@ -24,6 +24,8 @@ export type Main = {
   compactions: number
   costUsd: number | null
   limits: Array<{ kind: string; pct: number }>
+  /** When the shown tasks all became completed */
+  doneAt: number | null
 }
 
 declare module 'claude-code' {

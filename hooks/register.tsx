@@ -37,6 +37,7 @@ const DEFAULT_MAIN: Main = {
   compactions: 0,
   costUsd: null,
   limits: [],
+  doneAt: null,
 }
 const main = atom({ plugin: 'task-progress', key: 'main' } as const, DEFAULT_MAIN)
 
@@ -90,6 +91,32 @@ const mmss = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
+// `오후 2:05`, and `10월 9일 오후 2:05` once it is another day
+export const doneTime = (at: number, now: number) => {
+  const d = new Date(at)
+  const h = d.getHours()
+  const day = d.toDateString() === new Date(now).toDateString() ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 `
+  return `${day}${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+// todos win, unless all are done and a plan still has open work
+const shownTasks = (todos: Task[], p: Plan | undefined) => {
+  const planOpen = (p?.tasks ?? []).some(t => t.status !== 'completed')
+  return todos.some(t => t.status !== 'completed') || (todos.length > 0 && !planOpen) ? todos : (p?.tasks ?? [])
+}
+
+// the moment the shown list became all done; cleared once something is open again
+const stampDone = async ($: EngineInterface) => {
+  const [todos, p, m] = await Promise.all([read($, tasks).then(t => Object.values(t ?? {})), read($, plan), read($, main)])
+  const list = shownTasks(todos, p)
+  const allDone = list.length > 0 && list.every(t => t.status === 'completed')
+  const stamped = typeof m?.doneAt === 'number'
+  if (allDone && !stamped) {
+    const at = await $.clock.now()
+    await setMain($, () => ({ doneAt: at }))
+  } else if (!allDone && stamped) await setMain($, () => ({ doneAt: null }))
+}
+
 const numbered = (t: Task) => (t.n ? `#${t.n} ${t.label}` : t.label)
 
 // `Bash · Run tests`, `Read · plan.ts`: the tool and the most telling input it has
@@ -218,12 +245,16 @@ export const register: Register = on => {
       })
     }
 
-    if (e.agentId) return ran
+    if (e.agentId) {
+      await stampDone($)
+      return ran
+    }
     const planned = e.tool === 'ExitPlanMode' ? (ran.result as BuiltinToolResults['ExitPlanMode'] | undefined)?.filePath : undefined
     // Read too: a plan written in an earlier session is executed by reading it
     const written = (e.tool === 'Write' || e.tool === 'Edit' || e.tool === 'Read') && isPlanPath(e.file_path) ? e.file_path : undefined
     const path = planned ?? written ?? (await read($, plan))?.path
     if (path) await refreshPlan($, path)
+    await stampDone($)
     if (!planned) return ran
     return { ...ran, context: [...(ran.context ?? []), `Mark each step done by ticking it (- [x], or 1. [x] for numbered steps) in ${planned} as you finish it.`] }
   })
@@ -237,9 +268,7 @@ export const register: Register = on => {
       read($, agents).then(a => Object.values(a ?? {}).filter(r => r.endedAt === undefined).sort((x, y) => y.startedAt - x.startedAt)),
       $.clock.now(),
     ])
-    // todos win, unless all are done and a plan still has open work
-    const planOpen = (p?.tasks ?? []).some(t => t.status !== 'completed')
-    const list = todos.some(t => t.status !== 'completed') || (todos.length > 0 && !planOpen) ? todos : (p?.tasks ?? [])
+    const list = shownTasks(todos, p)
     const { Box, Text } = $.ui.resolve(e)
     const W = Math.max(30, e.props.bodyColumns)
     const f = frame()
@@ -363,7 +392,7 @@ export const register: Register = on => {
             <Text dimColor>{` · ${percent}%`}</Text>
           </Text>
           {allDone ? (
-            <Text color="green">✓ 모두 완료</Text>
+            <Text color="green">{m.doneAt !== null ? `✓ 모두 완료 · ${doneTime(m.doneAt, now)}` : '✓ 모두 완료'}</Text>
           ) : active.length > 0 ? (
             <Text color="yellow" wrap="truncate">{`${busy ? spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
           ) : (

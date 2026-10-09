@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { doneTime } from './register'
 
 const pane = {
   plugin: 'task-progress',
@@ -46,7 +47,14 @@ test('tasks panel shows done/total next to the bar and the current step below', 
 
   await write([todo('a', 'completed')])
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓ 모두 완료$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 모두 완료 · (오전|오후) \d{1,2}:\d{2}$/ })).toBeDefined()
+})
+
+test('done time reads as 오전/오후 h:mm, with the date once it is another day', () => {
+  const at = new Date(2026, 9, 9, 14, 5).getTime()
+  expect(doneTime(at, at + 60_000)).toBe('오후 2:05')
+  expect(doneTime(new Date(2026, 9, 9, 0, 30).getTime(), at)).toBe('오전 12:30')
+  expect(doneTime(at, new Date(2026, 9, 10, 9, 0).getTime())).toBe('10월 9일 오후 2:05')
 })
 
 const SP = '/r/docs/superpowers/plans/2026-01-01-x.md'
@@ -258,6 +266,6 @@ test('once every task is done, a running turn shows what Claude is doing', async
   await $.turn.start({ text: 'go', turnId: 'T1' })
   await $.tool.call({ tool: 'Bash', command: 'git push', description: 'Push branch' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓ 모두 완료$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 모두 완료 · / })).toBeDefined()
   expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Bash · Push branch$/ })).toBeDefined()
 })
