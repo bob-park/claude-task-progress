@@ -142,7 +142,7 @@ export const register: Register = on => {
       const at = await $.clock.now()
       await update($, agents, all => {
         const r = all?.[agentId]
-        return r ? { ...all, [agentId]: { ...r, endedAt: at, ok: e.reason === 'answer' } } : all
+        return r ? { ...all, [agentId]: { ...r, endedAt: at } } : all
       })
     } else await setMain($, () => ({ isRunning: false, activity: '' }))
     await animate($)
@@ -156,7 +156,7 @@ export const register: Register = on => {
       // a step after its end: the agent resumed once its background work came back
       const r = (await read($, agents))?.[agentId]
       if (r) {
-        const { endedAt, ok: _, ...run } = r
+        const { endedAt, ...run } = r
         await update($, agents, all => ({ ...all, [agentId]: { ...run, model: e.model } }))
         if (endedAt !== undefined) await animate($)
       }
@@ -233,7 +233,8 @@ export const register: Register = on => {
       read($, main).then(x => ({ ...DEFAULT_MAIN, ...x })),
       read($, tasks).then(Object.values),
       read($, plan),
-      read($, agents).then(a => Object.values(a ?? {}).sort((x, y) => x.n - y.n)),
+      // running ones only, the latest on top
+      read($, agents).then(a => Object.values(a ?? {}).filter(r => r.endedAt === undefined).sort((x, y) => y.startedAt - x.startedAt)),
       $.clock.now(),
     ])
     // todos win, unless all are done and a plan still has open work
@@ -244,7 +245,7 @@ export const register: Register = on => {
     const f = frame()
     const spin = SPINNER[f % SPINNER.length]
     // a background agent keeps the session working after the main turn ends
-    const busy = m.isRunning || runs.some(r => r.endedAt === undefined)
+    const busy = m.isRunning || runs.length > 0
 
     // ---- main (layout from Flightdeck's main panel)
     const effortN = { low: 1, medium: 2, high: 3, xhigh: 4, max: 4 }[m.effort] ?? 0
@@ -296,15 +297,13 @@ export const register: Register = on => {
         <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={W}>
           <Text color="magenta" bold>AGENTS</Text>
           {runs.map(r => {
-            const running = r.endedAt === undefined
-            const right = ` ${prettyModel(r.model)} ${mmss((r.endedAt ?? now) - r.startedAt)}`
+            const right = ` ${prettyModel(r.model)} ${mmss(now - r.startedAt)}`
             const room = W - 4 - 2 - right.length - 4 // icon, then ` ---` at the least
             let left = `${r.n}: ${r.label}`
             if (left.length > room) left = `${left.slice(0, Math.max(0, room - 1))}…`
-            const icon = running ? spin : r.ok === false ? '✗' : '✓'
             return (
-              <Text key={String(r.n)} color={running ? 'yellow' : r.ok === false ? 'red' : 'green'} wrap="truncate">
-                {`${icon} ${left} ${'-'.repeat(Math.max(3, room - left.length + 3))}${right}`}
+              <Text key={String(r.n)} color="yellow" wrap="truncate">
+                {`${spin} ${left} ${'-'.repeat(Math.max(3, room - left.length + 3))}${right}`}
               </Text>
             )
           })}

@@ -4,7 +4,7 @@ export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 export type Task = { status: TaskStatus; label: string; n?: string }
 
 /** A subagent the model spawned, listed under the tasks */
-export type AgentRun = { n: number; label: string; model: string; startedAt: number; endedAt?: number; ok?: boolean }
+export type AgentRun = { n: number; label: string; model: string; startedAt: number; endedAt?: number }
 
 /** The plan file progress is read from when there are no todos; `finishing` once finishing-a-development-branch ran on it */
 export type Plan = { path: string; tasks: Task[]; finishing?: boolean }

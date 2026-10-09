@@ -154,20 +154,27 @@ test('agents list below the tasks: num, label, model and mm:ss', async ($, on) =
   await clock.advance(41_000)
   await $.agent.spawn({ prompt: 'p', description: 'Review diff' } as never)
   await clock.advance(42_000)
-  await end('A1')
-  await clock.advance(5_000)
 
+  // the latest on top
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^AGENTS$/ })).toBeDefined()
-  expect(await ui.find({ text: /^✓ 1: Explore auth -+ Haiku 5\.5 01:23$/ })).toBeDefined()
-  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 2: Review diff -+ Haiku 5\.5 00:47$/ })).toBeDefined()
+  const rows = await ui.findAll({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d: / })
+  expect(rows.map(r => r.text)).toEqual([
+    expect.stringMatching(/^. 2: Review diff -+ Haiku 5\.5 00:42$/),
+    expect.stringMatching(/^. 1: Explore auth -+ Haiku 5\.5 01:23$/),
+  ])
   await ui.unmount()
 
-  // a new prompt clears the finished ones
-  await $.turn.start({ text: 'go', turnId: 'T2' })
+  // a finished one leaves the list at once
+  await end('A1')
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /Explore auth/ })).toBeUndefined()
   expect(await ui.find({ text: /2: Review diff/ })).toBeDefined()
+  await ui.unmount()
+
+  await end('A2')
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^AGENTS$/ })).toBeUndefined()
 })
 
 test('a TaskCreate task shows its number on the current line', async ($, on) => {
@@ -215,7 +222,7 @@ test('an agent waiting on its background work stays running, and a resumed one r
   await end('A2')
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 1: Scan / })).toBeDefined()
-  expect(await ui.find({ text: /^✓ 2: Lint / })).toBeDefined()
+  expect(await ui.find({ text: /2: Lint/ })).toBeUndefined()
   await ui.unmount()
 
   // A2 is woken again: its next step puts it back to running
