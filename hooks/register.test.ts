@@ -1,27 +1,48 @@
 import { expect, test } from 'claude-code/testing'
 
-test('shows done / total from TodoWrite', async ($, on) => {
+const pane = {
+  plugin: 'task-progress',
+  component: 'Pane' as const,
+  requestId: 'task-progress',
+  props: { title: 'Task Progress', isFocused: false, bodyColumns: 46, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+}
+
+const todo = (content: string, status: 'pending' | 'in_progress' | 'completed') => ({ content, status, activeForm: `${content}ing` })
+
+test('main panel shows idle, then working once a turn starts', async ($, on) => {
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /· main$/ })).toBeDefined()
+  expect(await ui.find({ text: /○ idle/ })).toBeDefined()
+  expect(await ui.find({ text: /TASKS/ })).toBeUndefined() // no tasks yet: no tasks panel
+  await ui.unmount()
+
+  await $.turn.start({ text: 'go', turnId: 'T1' })
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /● working/ })).toBeDefined()
+})
+
+test('tasks panel shows done/total next to the bar and the current step below', async ($, on) => {
   // stands for the engine answering the tool
   on('tool.call', () => ({ result: { oldTodos: [], newTodos: [] } }) as never)
+  const write = (todos: ReturnType<typeof todo>[]) => $.tool.call({ tool: 'TodoWrite', todos })
 
-  await $.tool.call({
-    tool: 'TodoWrite',
-    todos: [
-      { content: 'a', status: 'completed', activeForm: 'a' },
-      { content: 'b', status: 'in_progress', activeForm: 'b' },
-      { content: 'c', status: 'pending', activeForm: 'c' },
-    ],
-  })
-
+  await write([todo('a', 'completed'), todo('Build', 'in_progress'), todo('c', 'pending')])
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({
-      plugin: 'task-progress',
-      surface,
-      component: 'AbovePrompt',
-      props: { hasSurvey: false, isWorking: false, maxRows: 10 },
-    } as never)
-    expect((await ui.find({ text: /^1$/ }))?.props.color).toBe("blue")
-    expect((await ui.find({ text: /^ \/ 3$/ }))?.props.color).toBe("white")
-    expect(await ui.find({ text: / 33%$/ })).toBeDefined()
+    const ui = await $.ui.mount({ ...pane, surface } as never)
+    expect((await ui.find({ text: /^ 1\/3$/ }))?.props.color).toBe('blue')
+    expect(await ui.find({ text: /^ · 33%$/ })).toBeDefined()
+    expect((await ui.find({ text: /^▓+$/ }))?.props.color).toBe('yellow')
+    expect(await ui.find({ text: /^▸ Building$/ })).toBeDefined()
+    await ui.unmount()
   }
+
+  await write([todo('a', 'completed'), todo('Ship', 'pending')])
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^○ 다음: Shiping$/ })).toBeDefined()
+  await ui.unmount()
+
+  await write([todo('a', 'completed')])
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^✓ 모두 완료$/ })).toBeDefined()
 })
