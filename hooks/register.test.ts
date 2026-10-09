@@ -159,8 +159,8 @@ test('agents list below the tasks: num, label, model and mm:ss', async ($, on) =
 
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^AGENTS$/ })).toBeDefined()
-  expect(await ui.find({ text: /^✓ 1: Explore auth -+ Haiku 5\.5 \{01:23\}$/ })).toBeDefined()
-  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 2: Review diff -+ Haiku 5\.5 \{00:47\}$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 1: Explore auth -+ Haiku 5\.5 01:23$/ })).toBeDefined()
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 2: Review diff -+ Haiku 5\.5 00:47$/ })).toBeDefined()
   await ui.unmount()
 
   // a new prompt clears the finished ones
@@ -197,4 +197,60 @@ test('a new plan shows once every todo is done', async ($, on) => {
   await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^ 0\/2$/ })).toBeDefined()
+})
+
+test('an agent waiting on its background work stays running, and a resumed one runs again', async ($, on) => {
+  mock.clock(on)
+  const status: Record<string, string> = { A1: 'waiting', A2: 'completed' }
+  on('agent.spawn', (_$, e) => ({ model: 'claude-haiku-5-5', agentId: e.description === 'Scan' ? 'A1' : 'A2' }))
+  on('agent.list', () => ({ value: Object.entries(status).map(([id, s]) => ({ id, status: s, description: '', type: 'general-purpose' })) }) as never)
+  on('turn.step', async function* () { return { answer: '', toolUses: [] } as never })
+  on('turn.complete', () => ({ text: '' }))
+  const end = (agentId: string) =>
+    $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'T', agentId, reason: 'answer' } as never)
+
+  await $.agent.spawn({ prompt: 'p', description: 'Scan' } as never)
+  await $.agent.spawn({ prompt: 'p', description: 'Lint' } as never)
+  await end('A1')
+  await end('A2')
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 1: Scan / })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 2: Lint / })).toBeDefined()
+  await ui.unmount()
+
+  // A2 is woken again: its next step puts it back to running
+  for await (const _ of $.turn.step({ agentId: 'A2', model: 'claude-haiku-5-5' } as never)) void _
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 2: Lint / })).toBeDefined()
+})
+
+test('finishing-a-development-branch shows under the tasks until another plan', async ($, on) => {
+  mock.clock(on)
+  const B = '/r/docs/superpowers/plans/2026-02-01-next.md'
+  on('fs.read', (_$, e) => (e.path === SP || e.path === B ? { value: '### Task 1: A\n- [x] a\n' } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('skill.prompt', () => ({ text: '' }))
+
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  await $.skill.prompt({ skill: 'superpowers:finishing-a-development-branch', text: '' })
+  await $.tool.call({ tool: 'Read', file_path: SP } as never)
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^⎇ finishing-a-development-branch$/ })).toBeDefined()
+  await ui.unmount()
+
+  await $.tool.call({ tool: 'Write', file_path: B, content: '' } as never)
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /finishing-a-development-branch/ })).toBeUndefined()
+})
+
+test('once every task is done, a running turn shows what Claude is doing', async ($, on) => {
+  mock.clock(on)
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('tool.call', () => ({ result: {} }) as never)
+  await $.tool.call({ tool: 'TodoWrite', todos: [todo('a', 'completed')] } as never)
+  await $.turn.start({ text: 'go', turnId: 'T1' })
+  await $.tool.call({ tool: 'Bash', command: 'git push', description: 'Push branch' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^✓ 모두 완료$/ })).toBeDefined()
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Bash · Push branch$/ })).toBeDefined()
 })

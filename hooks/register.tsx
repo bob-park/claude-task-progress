@@ -19,7 +19,8 @@ const refreshPlan = async ($: EngineInterface, path: string) => {
   await update($, plan, prev => {
     const tasks = parsePlan(text, owned)
     // same plan (maybe now in the main checkout): done stays done
-    return { path, tasks: prev?.path && base(prev.path) === base(path) ? keepCompleted(prev.tasks, tasks) : tasks }
+    const same = !!prev?.path && base(prev.path) === base(path)
+    return { path, tasks: same ? keepCompleted(prev.tasks, tasks) : tasks, ...(same && prev.finishing ? { finishing: true } : {}) }
   })
 }
 
@@ -135,6 +136,9 @@ export const register: Register = on => {
     const done = await next(e)
     if (e.agentId) {
       const { agentId } = e
+      // an agent waiting on its own background work ends its turn but isn't done
+      const status = (await $.agent.list().catch(() => [])).find(a => a.id === agentId)?.status
+      if (status === 'waiting') return done
       const at = await $.clock.now()
       await update($, agents, all => {
         const r = all?.[agentId]
@@ -148,7 +152,15 @@ export const register: Register = on => {
   on('turn.step', async function* ($, e, next) {
     const { agentId } = e
     if (!agentId) await setMain($, m => ({ model: e.model, effort: String(e.effort ?? m.effort), steps: m.steps + 1 }))
-    else await update($, agents, all => (all?.[agentId] ? { ...all, [agentId]: { ...all[agentId], model: e.model } } : all))
+    else {
+      // a step after its end: the agent resumed once its background work came back
+      const r = (await read($, agents))?.[agentId]
+      if (r) {
+        const { endedAt, ok: _, ...run } = r
+        await update($, agents, all => ({ ...all, [agentId]: { ...run, model: e.model } }))
+        if (endedAt !== undefined) await animate($)
+      }
+    }
     return yield* next(e)
   })
 
@@ -165,6 +177,11 @@ export const register: Register = on => {
       await animate($)
     }
     return spawned
+  })
+
+  on('skill.prompt', async ($, e, next) => {
+    if (/(^|:)finishing-a-development-branch$/.test(e.skill)) await update($, plan, p => ({ ...(p ?? { path: '', tasks: [] }), finishing: true }))
+    return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
@@ -273,14 +290,14 @@ export const register: Register = on => {
       </Box>
     )
 
-    // ---- agents: `1: label --- Model {mm:ss}`, the right column lined up
+    // ---- agents: `1: label --- Model mm:ss`, the right column lined up
     const agentsPanel =
       runs.length > 0 ? (
         <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={W}>
           <Text color="magenta" bold>AGENTS</Text>
           {runs.map(r => {
             const running = r.endedAt === undefined
-            const right = ` ${prettyModel(r.model)} {${mmss((r.endedAt ?? now) - r.startedAt)}}`
+            const right = ` ${prettyModel(r.model)} ${mmss((r.endedAt ?? now) - r.startedAt)}`
             const room = W - 4 - 2 - right.length - 4 // icon, then ` ---` at the least
             let left = `${r.n}: ${r.label}`
             if (left.length > room) left = `${left.slice(0, Math.max(0, room - 1))}…`
@@ -294,16 +311,19 @@ export const register: Register = on => {
         </Box>
       ) : null
 
+    // what Claude is doing right now, when no task says it
+    const activityPanel =
+      m.isRunning && m.activity ? (
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} width={W}>
+          <Text color="yellow" wrap="truncate">{`${spin} ${m.activity}`}</Text>
+        </Box>
+      ) : null
+
     if (list.length === 0) {
-      // nothing planned: show what Claude is doing right now
       return (
         <Box flexDirection="column">
           {mainPanel}
-          {m.isRunning && m.activity ? (
-            <Box borderStyle="round" borderColor="yellow" paddingX={1} width={W}>
-              <Text color="yellow" wrap="truncate">{`${spin} ${m.activity}`}</Text>
-            </Box>
-          ) : null}
+          {activityPanel}
           {agentsPanel}
         </Box>
       )
@@ -350,7 +370,9 @@ export const register: Register = on => {
           ) : (
             <Text dimColor wrap="truncate">{`○ 다음: ${next ? numbered(next) : '—'}`}</Text>
           )}
+          {p?.finishing ? <Text color="cyan" wrap="truncate">{`${busy ? spin : '⎇'} finishing-a-development-branch`}</Text> : null}
         </Box>
+        {allDone ? activityPanel : null}
         {agentsPanel}
       </Box>
     )

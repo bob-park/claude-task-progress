@@ -6,8 +6,8 @@ export type Task = { status: TaskStatus; label: string; n?: string }
 /** A subagent the model spawned, listed under the tasks */
 export type AgentRun = { n: number; label: string; model: string; startedAt: number; endedAt?: number; ok?: boolean }
 
-/** The plan file progress is read from when there are no todos */
-export type Plan = { path: string; tasks: Task[] }
+/** The plan file progress is read from when there are no todos; `finishing` once finishing-a-development-branch ran on it */
+export type Plan = { path: string; tasks: Task[]; finishing?: boolean }
 
 /** Main-loop vitals, drawn like Flightdeck's main panel */
 export type Main = {
