@@ -224,6 +224,8 @@ export const register: Register = on => {
     const W = Math.max(30, e.props.bodyColumns)
     const f = frame()
     const spin = SPINNER[f % SPINNER.length]
+    // a background agent keeps the session working after the main turn ends
+    const busy = m.isRunning || runs.some(r => r.endedAt === undefined)
 
     // ---- main (layout from Flightdeck's main panel)
     const effortN = { low: 1, medium: 2, high: 3, xhigh: 4, max: 4 }[m.effort] ?? 0
@@ -232,7 +234,7 @@ export const register: Register = on => {
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} width={W}>
         <Box justifyContent="space-between">
           <Text color="cyan" bold>{`${prettyModel(m.model)} · main`}</Text>
-          <Text color={m.isRunning ? 'cyan' : undefined} dimColor={!m.isRunning}>{m.isRunning ? `${spin} working` : '○ idle'}</Text>
+          <Text color={busy ? 'cyan' : undefined} dimColor={!busy}>{busy ? `${spin} working` : '○ idle'}</Text>
         </Box>
         <Text wrap="truncate">
           <Text dimColor>effort </Text>
@@ -316,7 +318,7 @@ export const register: Register = on => {
     const allDone = done === total
     const next = list.find(t => t.status === 'pending')
     // a bright cell sweeps across the in-progress part of the bar while working
-    const sweep = m.isRunning && activeCells > 0 ? f % activeCells : -1
+    const sweep = busy && activeCells > 0 ? f % activeCells : -1
 
     return (
       <Box flexDirection="column">
@@ -342,7 +344,7 @@ export const register: Register = on => {
           {allDone ? (
             <Text color="green">✓ 모두 완료</Text>
           ) : active.length > 0 ? (
-            <Text color="yellow" wrap="truncate">{`${m.isRunning ? spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
+            <Text color="yellow" wrap="truncate">{`${busy ? spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
           ) : (
             <Text dimColor wrap="truncate">{`○ 다음: ${next ? numbered(next) : '—'}`}</Text>
           )}

@@ -178,3 +178,11 @@ test('a TaskCreate task shows its number on the current line', async ($, on) => 
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^▸ #7 Ship$/ })).toBeDefined()
 })
+
+test('header shows working while an agent runs after the main turn ended', async ($, on) => {
+  mock.clock(on)
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'A1' }))
+  await $.agent.spawn({ prompt: 'p', description: 'Background scan' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] working$/ })).toBeDefined()
+})
