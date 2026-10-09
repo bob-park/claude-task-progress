@@ -2,6 +2,9 @@ export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 
 export type Task = { status: TaskStatus; label: string }
 
+/** The plan file progress is read from when there are no todos */
+export type Plan = { path: string; tasks: Task[] }
+
 /** Main-loop vitals, drawn like Flightdeck's main panel */
 export type Main = {
   model: string
@@ -19,6 +22,6 @@ export type Main = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'task-progress': { tasks: Record<string, Task>; main: Main }
+    'task-progress': { tasks: Record<string, Task>; main: Main; plan: Plan }
   }
 }

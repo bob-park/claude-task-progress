@@ -1,9 +1,21 @@
 import { atom, read, update } from 'claude-code'
 import type { BuiltinToolResults, EngineInterface, Register } from 'claude-code'
 
-import type { Main, Task } from '../types'
+import type { Main, Plan, Task } from '../types'
+import { isPlanPath, ledgerOwns, ledgerPath, parsePlan } from './plan'
 
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {} as Record<string, Task>)
+const plan = atom({ plugin: 'task-progress', key: 'plan' } as const, { path: '', tasks: [] } as Plan)
+
+// a failed read keeps what the pane already shows
+const refreshPlan = async ($: EngineInterface, path: string) => {
+  const text = await $.fs.read(path).catch(() => null)
+  if (typeof text !== 'string') return
+  const at = ledgerPath(path)
+  const ledger = at ? await $.fs.read(at).catch(() => null) : null
+  const owned = typeof ledger === 'string' && ledgerOwns(path, ledger) ? ledger : undefined
+  await update($, plan, () => ({ path, tasks: parsePlan(text, owned) }))
+}
 
 const DEFAULT_MAIN: Main = {
   model: '',
@@ -128,11 +140,22 @@ export const register: Register = on => {
       })
     }
 
-    return ran
+    if (e.agentId) return ran
+    const planned = e.tool === 'ExitPlanMode' ? (ran.result as BuiltinToolResults['ExitPlanMode'] | undefined)?.filePath : undefined
+    const written = (e.tool === 'Write' || e.tool === 'Edit') && isPlanPath(e.file_path) ? e.file_path : undefined
+    const path = planned ?? written ?? (await read($, plan))?.path
+    if (path) await refreshPlan($, path)
+    if (!planned) return ran
+    return { ...ran, context: [...(ran.context ?? []), `Mark each step done by ticking it (- [x]) in ${planned} as you finish it.`] }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [m, list] = await Promise.all([read($, main).then(x => ({ ...DEFAULT_MAIN, ...x })), read($, tasks).then(Object.values)])
+    const [m, todos, p] = await Promise.all([
+      read($, main).then(x => ({ ...DEFAULT_MAIN, ...x })),
+      read($, tasks).then(Object.values),
+      read($, plan),
+    ])
+    const list = todos.length > 0 ? todos : (p?.tasks ?? [])
     const { Box, Text } = $.ui.resolve(e)
     const W = Math.max(30, e.props.bodyColumns)
 
