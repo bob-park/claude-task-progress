@@ -36,20 +36,23 @@ export const register: Register = on => {
 
     const total = statuses.length
     const done = statuses.filter(s => s === 'completed').length
+    const active = statuses.filter(s => s === 'in_progress').length
     const filled = Math.round((done / total) * BAR_WIDTH)
+    const activeCells = Math.round(((done + active) / total) * BAR_WIDTH) - filled
     const percent = Math.round((done / total) * 100)
+    const allDone = done === total
     const { Box, Text } = $.ui.resolve(e)
 
+    // count sits right after the bar so the eye doesn't travel across the terminal
     return (
-      <Box flexDirection="row" justifyContent="space-between">
+      <Box flexDirection="row">
         <Text>
+          <Text bold color={allDone ? 'green' : undefined}>{allDone ? '✓ Tasks ' : 'Tasks '}</Text>
           <Text color="green">{'█'.repeat(filled)}</Text>
-          <Text dimColor>{'░'.repeat(BAR_WIDTH - filled)}</Text>
-          {` ${percent}%`}
-        </Text>
-        <Text bold>
-          <Text color="blue">{`${done}`}</Text>
-          <Text color="white">{` / ${total}`}</Text>
+          <Text color="yellow">{'▓'.repeat(activeCells)}</Text>
+          <Text dimColor>{'░'.repeat(BAR_WIDTH - filled - activeCells)}</Text>
+          <Text bold color="blue">{`  ${done}/${total}`}</Text>
+          <Text dimColor>{` · ${percent}%`}</Text>
         </Text>
       </Box>
     )
