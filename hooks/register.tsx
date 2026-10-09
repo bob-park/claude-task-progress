@@ -219,7 +219,9 @@ export const register: Register = on => {
       read($, agents).then(a => Object.values(a ?? {}).sort((x, y) => x.n - y.n)),
       $.clock.now(),
     ])
-    const list = todos.length > 0 ? todos : (p?.tasks ?? [])
+    // todos win, unless all are done and a plan still has open work
+    const planOpen = (p?.tasks ?? []).some(t => t.status !== 'completed')
+    const list = todos.some(t => t.status !== 'completed') || (todos.length > 0 && !planOpen) ? todos : (p?.tasks ?? [])
     const { Box, Text } = $.ui.resolve(e)
     const W = Math.max(30, e.props.bodyColumns)
     const f = frame()

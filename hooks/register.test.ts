@@ -186,3 +186,15 @@ test('header shows working while an agent runs after the main turn ended', async
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] working$/ })).toBeDefined()
 })
+
+test('a new plan shows once every todo is done', async ($, on) => {
+  mock.clock(on)
+  on('fs.read', (_$, e) => (e.path === SP ? { value: '### Task 1: A\n- [ ] a\n### Task 2: B\n- [ ] a\n' } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', (_$, e) => ({ result: e.tool === 'TaskCreate' ? { task: { id: '1', subject: 'x' } } : {} }) as never)
+
+  await $.tool.call({ tool: 'TaskCreate', subject: 'Old', description: 'd' } as never)
+  await $.tool.call({ tool: 'TaskUpdate', taskId: '1', status: 'completed' } as never)
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^ 0\/2$/ })).toBeDefined()
+})
