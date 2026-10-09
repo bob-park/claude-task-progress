@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { BuiltinToolResults, Register } from 'claude-code'
 
 import type { TaskStatus } from '../types'
 
@@ -16,9 +16,10 @@ export const register: Register = on => {
       // TodoWrite replaces the whole list
       const list = Object.fromEntries(e.todos.map((t, i) => [`todo:${i}`, t.status]))
       await update($, tasks, () => list)
-    } else if (e.tool === 'TaskCreate' && ran.result && 'task' in ran.result && ran.result.task) {
-      const id = ran.result.task.id
-      await update($, tasks, all => ({ ...all, [id]: 'pending' }))
+    } else if (e.tool === 'TaskCreate') {
+      // next(e) ran before e.tool was narrowed, so result isn't typed per tool
+      const id = (ran.result as BuiltinToolResults['TaskCreate'] | undefined)?.task?.id
+      if (id) await update($, tasks, all => ({ ...all, [id]: 'pending' as const }))
     } else if (e.tool === 'TaskUpdate' && e.status) {
       const { taskId, status } = e
       await update($, tasks, all => {
