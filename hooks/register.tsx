@@ -142,7 +142,8 @@ export const register: Register = on => {
 
     if (e.agentId) return ran
     const planned = e.tool === 'ExitPlanMode' ? (ran.result as BuiltinToolResults['ExitPlanMode'] | undefined)?.filePath : undefined
-    const written = (e.tool === 'Write' || e.tool === 'Edit') && isPlanPath(e.file_path) ? e.file_path : undefined
+    // Read too: a plan written in an earlier session is executed by reading it
+    const written = (e.tool === 'Write' || e.tool === 'Edit' || e.tool === 'Read') && isPlanPath(e.file_path) ? e.file_path : undefined
     const path = planned ?? written ?? (await read($, plan))?.path
     if (path) await refreshPlan($, path)
     if (!planned) return ran

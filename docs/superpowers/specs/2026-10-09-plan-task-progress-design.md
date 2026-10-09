@@ -27,7 +27,7 @@ panel draws the plan tasks. Rendering is unchanged; both produce `Task[]`.
 
 **Active plan.** After a successful main-loop (`!e.agentId`) tool call:
 
-- `Write` / `Edit` whose path matches `/docs/superpowers/plans/*.md` or
+- `Write` / `Edit` / `Read` (a plan from an earlier session is executed by reading it) whose path matches `/docs/superpowers/plans/*.md` or
   `/.claude/plans/*.md` → that path becomes the active plan.
 - `ExitPlanMode` with `result.filePath` → that path becomes the active plan.
 

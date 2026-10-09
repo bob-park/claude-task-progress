@@ -107,3 +107,12 @@ test('plan mode: ExitPlanMode makes its file the active plan and asks Claude to 
   expect(await ui.find({ text: /^ 1\/2$/ })).toBeDefined()
   expect(await ui.find({ text: /^▸ Edit file$/ })).toBeDefined()
 })
+
+test('reading a plan written in an earlier session makes it the active plan', async ($, on) => {
+  on('fs.read', (_$, e) => (e.path === SP ? { value: '### Task 1: A\n- [x] a\n### Task 2: B\n- [ ] a\n' } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', (_$, e) => answer(e))
+
+  await $.tool.call({ tool: 'Read', file_path: SP } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^ 1\/2$/ })).toBeDefined()
+})
