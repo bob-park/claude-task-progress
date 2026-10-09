@@ -1,1 +1,1 @@
-{ "name": "task-progress", "version": "0.5.2", "description": "Right-side pane: main model vitals plus task progress and the current step", "types": "./types/index.d.ts" }
+{ "name": "task-progress", "version": "0.5.3", "description": "Right-side pane: main model vitals plus task progress and the current step", "types": "./types/index.d.ts" }
