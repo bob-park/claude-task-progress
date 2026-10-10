@@ -47,7 +47,8 @@ export type Main = {
 }
 
 export type Stage = 'brainstorm' | 'spec' | 'plan' | 'worktree' | 'execute' | 'review' | 'finish'
-export type SpPath = 'spike' | 'bounded' | 'architectural'
+/** How big the work is: superpowers 7.0.0 sizes it; a spike skips the plan workflow */
+export type SpPath = 'spike' | 'small' | 'project'
 /** What superpowers dispatched an agent for: SDD's implementer, or any review */
 export type Role = 'impl' | 'review'
 

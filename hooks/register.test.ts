@@ -343,30 +343,30 @@ test('superpowers section: hidden until a superpowers skill, then pipeline and p
   expect(await ui.find({ text: /^●brainstorm$/ })).toBeDefined()
   await ui.unmount()
 
-  await $.turn.complete(sdd('This looks bounded, so I will present a short design here.'))
+  await $.turn.complete(sdd('A quick spike would show whether this works. Want me to try one?'))
   await $.skill.prompt({ skill: 'superpowers:test-driven-development', text: '' })
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^BOUNDED$/ })).toBeDefined()
-  expect(await ui.find({ text: /^●brainstorm ○execute ○finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^SPIKE$/ })).toBeDefined()
+  expect(await ui.find({ text: /^●brainstorm$/ })).toBeDefined()
   expect(await ui.find({ text: /^\+ tdd$/ })).toBeDefined()
   await ui.unmount()
 
   // past brainstorming a reply no longer moves the badge
   await $.skill.prompt({ skill: 'superpowers:executing-plans', text: '' })
-  await $.turn.complete(sdd('a spike would be overkill'))
+  await $.turn.complete(sdd('this looks bounded after all'))
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^BOUNDED$/ })).toBeDefined()
-  expect(await ui.find({ text: /^✓brainstorm ●execute ○finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^SPIKE$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓brainstorm ●execute$/ })).toBeDefined()
 })
 
-test('a spec makes the path architectural', async ($, on) => {
+test('a spec makes it a project', async ($, on) => {
   mock.clock(on)
   on('skill.prompt', () => ({ text: '' }))
   on('tool.call', () => ({ result: {} }) as never)
   await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
   await $.tool.call({ tool: 'Write', file_path: '/r/docs/superpowers/specs/2026-01-01-x-design.md', content: '' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^ARCHITECTURAL$/ })).toBeDefined()
+  expect(await ui.find({ text: /^PROJECT$/ })).toBeDefined()
   // too wide for the pane: the done stages fold into ✓…
   expect(await ui.find({ text: /^✓… ●spec ○plan ○execute ○review ○finish$/ })).toBeDefined()
 })
@@ -512,4 +512,17 @@ test("SDD's whole-branch reviewer reaches the review stage", async ($, on) => {
   await $.agent.spawn({ prompt: 'p', description: 'Review code changes' } as never)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^✓execute [●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]review$/ })).toBeDefined()
+})
+
+test("7.0.0 brainstorming's builder check shows as a review under superpowers", async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'B1' }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
+  await $.agent.spawn({ prompt: 'You are a talented software engineer…', description: 'Builder check' } as never)
+  await $.turn.complete({ ...(sdd('nothing important left') as object), agentId: 'B1' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^✓ review Builder check +approved 00:00$/ })).toBeDefined()
+  expect(await ui.find({ text: /^AGENTS$/ })).toBeUndefined()
 })

@@ -4,10 +4,10 @@ Claude Code mod: a pane docked to the right of the transcript that monitors any 
 
 1. **main** — model, working/idle, effort, permission mode, request count, context gauge (⟲ compactions), cost and rate limits (layout from [Flightdeck](https://github.com/scasella/claude-flightdeck), MIT)
 2. **⚡ SUPERPOWERS** — shows once a superpowers skill runs (or a superpowers plan is opened):
-   - the path brainstorming chose (`SPIKE` / `BOUNDED` / `ARCHITECTURAL`, read from its reply; a spec or plan makes it architectural)
-   - the pipeline `✓brainstorm ✓spec ✓plan ●execute ○review ○finish`, shaped by the path; `worktree` joins once reached, and done stages fold into `✓…` when the pane is narrow
+   - how big the work is (superpowers 7.0.0): `PROJECT` once a spec or plan is written, `SPIKE` when brainstorming proposes one (6.4.1's `bounded` / `architectural` show as `SMALL` / `PROJECT`)
+   - the pipeline `✓brainstorm ✓spec ✓plan ●execute ○review ○finish` for a project, otherwise the stages reached; `worktree` joins once reached, and done stages fold into `✓…` when the pane is narrow (the current stage always stays)
    - the plan's progress bar and current task (`docs/superpowers/plans/*.md`, `### Task N:` headings, completed by the SDD ledger or ticked steps), and when it all finished
-   - SDD's agents by role: `impl #4  Haiku 5.5 01:12`, `review #3  approved 00:41` (`⚠ … issues` when the review wants fixes)
+   - its agents by role, working ones first: `impl #4  Haiku 5.5 01:12`, `review #3  approved 00:41` (`⚠ … issues` when the review wants fixes); brainstorming's builder check shows as a review
    - extras used along the way: `+ tdd  + debugging  + verification`
 3. **TASKS** — todos (TodoWrite / TaskCreate), else a plan-mode plan (`~/.claude/plans/*.md`, its `- [ ]` checkboxes, else its numbered steps ticked as `1. [x]`): progress bar with `done/total · %` beside it, in-progress tasks in yellow, the current step below with its number (`▸ #2 Wiring`), and `✓ 모두 완료 · 오후 2:05` once every task is done
 4. **AGENTS** — every other subagent as `1: Explore auth --- Haiku 5.5 01:23`, running ones first (⏸ when waiting on its own background work), then the latest 3 that ended (`✓` done, `✗` failed) with their final time. The header counts all agents: `2 running · 5 done · 1 failed`

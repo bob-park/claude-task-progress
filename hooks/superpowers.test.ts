@@ -19,7 +19,7 @@ test('reach moves forward only, and starts over after finish', () => {
   sp = reach(sp, 'execute')
   sp = reach(sp, 'plan') // a late plan read
   expect(sp.current).toBe('execute')
-  expect(sp.path).toBe('architectural')
+  expect(sp.path).toBe('project')
   sp = reach(addExtra(sp, 'tdd'), 'finish')
   expect(sp.current).toBe('finish')
   sp = reach(sp, 'brainstorm')
@@ -31,14 +31,19 @@ test('addExtra keeps each extra once', () => {
 })
 
 test('path is the last one a reply names, any case, inside Korean text', () => {
-  expect(pathFrom('this looks bounded, so I will present a short design')).toBe('bounded')
-  expect(pathFrom('**분류: Architectural** — spec 경로로 가겠습니다')).toBe('architectural')
-  expect(pathFrom('Spike인 줄 알았는데 BOUNDED로 올립니다')).toBe('bounded')
+  // 7.0.0 sizes the work in plain words; only a spike is named
+  expect(pathFrom('A quick throwaway spike would tell us faster.')).toBe('spike')
+  expect(pathFrom('이건 spike 로 먼저 확인해 볼게요')).toBe('spike')
+  expect(pathFrom('This is a small change, so I will describe it here.')).toBeUndefined()
+  // 6.4.1 named its three paths: they map onto the same badges
+  expect(pathFrom('this looks bounded, so I will present a short design')).toBe('small')
+  expect(pathFrom('**분류: Architectural** — spec 경로로 가겠습니다')).toBe('project')
+  expect(pathFrom('Spike인 줄 알았는데 BOUNDED로 올립니다')).toBe('small')
   expect(pathFrom('nothing here, unbounded')).toBeUndefined()
 })
 
 test('pipeline draws the path template plus reached stages', () => {
-  expect(pipeline({ ...EMPTY_SP, path: 'architectural', stages: ['brainstorm', 'plan', 'execute'], current: 'execute' }).map(s => `${s.state}:${s.stage}`)).toEqual([
+  expect(pipeline({ ...EMPTY_SP, path: 'project', stages: ['brainstorm', 'plan', 'execute'], current: 'execute' }).map(s => `${s.state}:${s.stage}`)).toEqual([
     'done:brainstorm',
     'done:spec',
     'done:plan',
@@ -46,15 +51,12 @@ test('pipeline draws the path template plus reached stages', () => {
     'todo:review',
     'todo:finish',
   ])
-  expect(pipeline({ ...EMPTY_SP, path: 'bounded', stages: ['brainstorm'], current: 'brainstorm' }).map(s => s.stage)).toEqual([
-    'brainstorm',
-    'execute',
-    'finish',
-  ])
-  // no path yet, or spike: only what was reached
+  // a small change or a spike skips the plan workflow: only what was reached
+  expect(pipeline({ ...EMPTY_SP, path: 'small', stages: ['brainstorm'], current: 'brainstorm' }).map(s => s.stage)).toEqual(['brainstorm'])
+  expect(pipeline({ ...EMPTY_SP, path: 'spike', stages: ['brainstorm'], current: 'brainstorm' }).map(s => s.stage)).toEqual(['brainstorm'])
   expect(pipeline({ ...EMPTY_SP, stages: ['brainstorm'], current: 'brainstorm' }).map(s => s.stage)).toEqual(['brainstorm'])
   // worktree shows once reached
-  expect(pipeline({ ...EMPTY_SP, path: 'architectural', stages: ['worktree'], current: 'worktree' }).map(s => s.stage)).toContain('worktree')
+  expect(pipeline({ ...EMPTY_SP, path: 'project', stages: ['worktree'], current: 'worktree' }).map(s => s.stage)).toContain('worktree')
 })
 
 test('SDD dispatches get a role and task number; reports a verdict', () => {
@@ -62,12 +64,14 @@ test('SDD dispatches get a role and task number; reports a verdict', () => {
   expect(roleOf('Review Task 3 (spec + quality)')).toBe('review')
   expect(roleOf('Re-review Task 3 fix round 1')).toBe('review')
   expect(roleOf('Review spec document')).toBe('review')
+  expect(roleOf('Builder check on the design doc')).toBe('review') // 7.0.0 brainstorming
   expect(roleOf('Explore auth')).toBeUndefined()
   expect(taskNOf('Review Task 12 (spec + quality)')).toBe('12')
   expect(taskNOf('Explore auth')).toBeUndefined()
   expect(verdictOf('**Task quality:** Approved')).toBe('ok')
   expect(verdictOf('✅ Spec compliant\n**Task quality:** Needs fixes')).toBe('issues')
   expect(verdictOf('Finding 1: NOT ADDRESSED')).toBe('issues')
+  expect(verdictOf('nothing important left')).toBe('ok') // a builder check with no questions
   expect(verdictOf('done')).toBeUndefined()
 })
 

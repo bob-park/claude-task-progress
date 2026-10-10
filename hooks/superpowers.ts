@@ -36,20 +36,23 @@ export const reach = (sp: Sp, stage: Stage): Sp => {
   const base = sp.stages.includes('finish') && at(stage) < at('finish') ? EMPTY_SP : sp
   const stages = base.stages.includes(stage) ? base.stages : [...base.stages, stage]
   const current = at(base.current) > at(stage) ? base.current : stage
-  // a spec or plan is only written on the architectural path
-  const path = stage === 'spec' || stage === 'plan' ? 'architectural' : base.path
+  // a spec or plan is only written for a project
+  const path = stage === 'spec' || stage === 'plan' ? 'project' : base.path
   return { ...base, stages, ...(current ? { current } : {}), ...(path ? { path } : {}) }
 }
 
 export const addExtra = (sp: Sp, extra: string): Sp => (sp.extras.includes(extra) ? sp : { ...sp, extras: [...sp.extras, extra] })
 
-/** The last spike / bounded / architectural a reply names */
-export const pathFrom = (text: string) =>
-  [...text.matchAll(/\b(spike|bounded|architectural)\b/gi)].at(-1)?.[1]?.toLowerCase() as SpPath | undefined
+// 7.0.0 sizes the work in plain words and names only a spike; 6.4.1 named three paths
+const PATH_OF: Record<string, SpPath> = { spike: 'spike', bounded: 'small', architectural: 'project' }
 
+/** The last spike (or 6.4.1 path) a reply names */
+export const pathFrom = (text: string) => PATH_OF[[...text.matchAll(/\b(spike|bounded|architectural)\b/gi)].at(-1)?.[1]?.toLowerCase() ?? '']
+
+// a small change or a spike goes through the normal workflow: only reached stages draw
 const TEMPLATE: Record<SpPath, Stage[]> = {
-  architectural: ['brainstorm', 'spec', 'plan', 'execute', 'review', 'finish'],
-  bounded: ['brainstorm', 'execute', 'finish'],
+  project: ['brainstorm', 'spec', 'plan', 'execute', 'review', 'finish'],
+  small: [],
   spike: [],
 }
 
@@ -65,15 +68,15 @@ export const pipeline = (sp: Sp): Step[] => {
   })
 }
 
-/** SDD dispatches `Implement Task N: …`, `Review Task N (…)`, `Re-review Task N …`; docs get `Review spec document` */
+/** SDD dispatches `Implement Task N: …`, `Review Task N (…)`, `Re-review Task N …`; 7.0.0 brainstorming a builder check */
 export const roleOf = (description: string): Role | undefined =>
-  /^implement\b/i.test(description) ? 'impl' : /review/i.test(description) ? 'review' : undefined
+  /^implement\b/i.test(description) ? 'impl' : /review|builder/i.test(description) ? 'review' : undefined
 
 export const taskNOf = (text: string) => /\bTask\s+(\d+)/.exec(text)?.[1]
 
-/** A reviewer's report: `Needs fixes` / `NOT ADDRESSED` / ❌ before `Approved` / `ADDRESSED` / ✅ */
+/** A reviewer's report: `Needs fixes` / `NOT ADDRESSED` / ❌ before `Approved` / `ADDRESSED` / ✅ / a builder check's `nothing important left` */
 export const verdictOf = (answer: string): 'ok' | 'issues' | undefined =>
-  /needs fixes|not addressed|❌/i.test(answer) ? 'issues' : /approved|addressed|✅/i.test(answer) ? 'ok' : undefined
+  /needs fixes|not addressed|❌/i.test(answer) ? 'issues' : /approved|addressed|✅|nothing important left/i.test(answer) ? 'ok' : undefined
 
 /** Joins parts; too wide drops the oldest (at most `droppable`) behind `lead` so the latest stay */
 export const fitTail = (parts: string[], sep: string, width: number, lead: string, droppable = parts.length - 1) => {

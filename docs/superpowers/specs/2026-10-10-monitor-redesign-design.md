@@ -16,7 +16,7 @@ todos, subagent history, skills used, and tool activity.
 
 Success: a session without superpowers shows TASKS / AGENTS / SKILLS / ACTIVITY as
 they happen; a superpowers session additionally shows SUPERPOWERS with the current
-stage, the spike/bounded/architectural badge, plan progress and SDD agents by role.
+stage, the work-size badge (SPIKE / SMALL / PROJECT), plan progress and SDD agents by role.
 
 ## Layout (mockup A)
 
@@ -29,7 +29,7 @@ Sections stack top to bottom; a section with nothing to show is hidden.
 │ ctx ▰▰▰▰▱▱▱▱▱▱ 41% 82k/200k                  │
 │ $3.12   5h ▰▰▱▱▱ 38%  7d ▰▱▱▱▱ 12%           │
 ╰──────────────────────────────────────────────╯
-╭─ ⚡ SUPERPOWERS ──────────── ARCHITECTURAL ──╮
+╭─ ⚡ SUPERPOWERS ────────────────── PROJECT ──╮
 │ ✓… ✓plan ●execute ○review ○finish            │
 │ ██████▓▓▓░░░░░░░░░░░░░░░░░ 3/8 · 37%         │
 │ ⠹ #4 Wire skill detector                     │
@@ -79,7 +79,7 @@ Atoms under plugin `task-progress`:
   a repeat of the last one is not added again; the latest 30 are kept.
 - `activity: Array<{ at: number; label: string; status: 'running' | 'ok' | 'error' }>` (new) —
   the last 10 main-loop tool calls.
-- `sp` (new): `{ path?: 'spike' | 'bounded' | 'architectural'; stages: Stage[]; current?: Stage; extras: string[]; doneAt: number | null }`,
+- `sp` (new): `{ path?: 'spike' | 'small' | 'project'; stages: Stage[]; current?: Stage; extras: string[]; doneAt: number | null }`,
   `Stage = 'brainstorm' | 'spec' | 'plan' | 'worktree' | 'execute' | 'review' | 'finish'`.
   Empty `stages` means superpowers has not run: the section is hidden.
 
@@ -115,27 +115,34 @@ add to `extras` (shown as `+ tdd`, `+ debugging`, `+ verification`).
 
 **Pipeline shape.** Drawn stages depend on `path`:
 
-- architectural: brainstorm, spec, plan, [worktree], execute, review, finish
-- bounded: brainstorm, execute, finish
-- spike, or no path yet: only the stages in `stages`
+- project: brainstorm, spec, plan, [worktree], execute, review, finish
+- small, spike, or no size yet: only the stages in `stages` (they go through the normal workflow)
 
 A drawn stage before `current` is `✓` (a skipped one counts as passed), `current` is `●`
 (the spinner while busy), the rest `○`. Too wide for the pane: the leading done stages collapse to `✓…`; the current and later stages never fold (the line is clipped instead).
 
-**Path badge.** While `current` is `brainstorm`, each main-loop `turn.complete` result
-text is matched with `/\b(spike|bounded|architectural)\b/gi`; the last match sets
-`path`. Reaching `spec` or `plan` sets `architectural` regardless.
+**Size badge.** Targets superpowers 7.0.0, whose brainstorming sizes the work in plain
+words (a quick task, a small change, a project with a written design) and avoids process
+jargon, so the badge rests on structure rather than wording:
 
-**SDD roles.** superpowers 6.4.1 dispatches `Implement Task N: …`, one combined
-`Review Task N (spec + quality)`, `Re-review Task N fix round R`, and document reviews
-(`Review spec document`, `Review plan document`, `Review code changes`). An
+- Reaching `spec` or `plan` sets `project`.
+- While `current` is `brainstorm`, each main-loop `turn.complete` answer is matched with
+  `/\b(spike|bounded|architectural)\b/gi`; the last match sets `path`: `spike` → spike,
+  and 6.4.1's named paths map `bounded` → small, `architectural` → project.
+- Otherwise no badge. A small change is not guessed from its plain-words wording.
+
+**SDD roles.** superpowers 7.0.0 (as 6.4.1) dispatches `Implement Task N: …`, one combined
+`Review Task N (spec + quality)`, `Re-review Task N fix round R`, and `Review code changes`;
+7.0.0's brainstorming adds a builder check of the written design (its description is the
+model's choice, e.g. `Builder check`; 6.4.1's `Review spec document` / `Review plan
+document` are gone). An
 `agent.spawn` while `sp.stages` is non-empty and `current` is not `finish` gets a role from its description alone
 (prompts quote the spec, so they would mislead): `/^implement\b/i` → impl, else
-`/review/i` → review, else none. `taskN` is the first `/\bTask\s+(\d+)/` in the
+`/review|builder/i` → review, else none. `taskN` is the first `/\bTask\s+(\d+)/` in the
 description only (prompts quote plan text). A review agent without a task number
 spawned while `current` is `execute` is SDD's whole-branch review: it reaches `review`. When a review agent's turn completes, its answer sets
-`verdict`: `/needs fixes|not addressed|❌/i` → issues, else `/approved|addressed|✅/i`
-→ ok, else unset.
+`verdict`: `/needs fixes|not addressed|❌/i` → issues, else
+`/approved|addressed|✅|nothing important left/i` → ok, else unset.
 
 **Agent status.** `running` on spawn. `turn.complete` for the agent: `waiting` when
 `$.agent.list()` reports it waiting (existing logic), `failed` when `reason` is `error`
@@ -186,7 +193,8 @@ result unchanged, except the existing ExitPlanMode context line.
   pipeline truncation.
 - `hooks/register.test.ts` (updated), mounting the pane:
   - no SUPERPOWERS before a superpowers skill; present after `brainstorming`
-  - a reply containing "bounded" shows the BOUNDED badge
+  - a reply naming a spike shows the SPIKE badge; a spec shows PROJECT
+  - a builder check shows as a review under SUPERPOWERS
   - an implementer spawned during SDD shows under SUPERPOWERS, not AGENTS
   - an agent spawned before any superpowers skill gets no role
   - a narrow pane folds the pipeline and the skills line
