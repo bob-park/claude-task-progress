@@ -186,11 +186,19 @@ const ROLES_SHOWN = 4
 export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame) => {
   const { Box, Text } = ui
   const mark = { done: '✓', current: v.busy ? v.spin : '●', todo: '○' }
-  const steps = pipeline(sp).map(s => `${mark[s.state]}${s.stage}`)
-  // the highest task first: that is where SDD is now
+  const steps = pipeline(sp)
+  // only done stages fold: the current one never leaves the line
+  const line = fitTail(
+    steps.map(s => `${mark[s.state]}${s.stage}`),
+    ' ',
+    v.W - 4,
+    '✓…',
+    steps.filter(s => s.state === 'done').length,
+  )
+  // working ones first, then the latest: SDD runs one at a time, so that is where it is now
   const roles = runs
     .filter(r => r.role)
-    .sort((x, y) => Number(y.taskN ?? 0) - Number(x.taskN ?? 0) || y.startedAt - x.startedAt)
+    .sort((x, y) => Number(y.status === 'running' || y.status === 'waiting') - Number(x.status === 'running' || x.status === 'waiting') || y.n - x.n)
     .slice(0, ROLES_SHOWN)
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={v.W}>
@@ -198,7 +206,7 @@ export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame
         <Text color="yellow" bold>⚡ SUPERPOWERS</Text>
         {sp.path ? <Text color="magenta" bold>{sp.path.toUpperCase()}</Text> : null}
       </Box>
-      <Text wrap="truncate">{fitTail(steps, ' ', v.W - 4, '✓…')}</Text>
+      <Text wrap="truncate">{line}</Text>
       {plan.length > 0 ? progressLines(ui, plan, sp.doneAt, v) : null}
       {roles.map(r =>
         agentRow(

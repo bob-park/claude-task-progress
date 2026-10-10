@@ -75,11 +75,11 @@ export const taskNOf = (text: string) => /\bTask\s+(\d+)/.exec(text)?.[1]
 export const verdictOf = (answer: string): 'ok' | 'issues' | undefined =>
   /needs fixes|not addressed|❌/i.test(answer) ? 'issues' : /approved|addressed|✅/i.test(answer) ? 'ok' : undefined
 
-/** Joins parts; too wide drops the oldest behind `lead` so the latest stay */
-export const fitTail = (parts: string[], sep: string, width: number, lead: string) => {
+/** Joins parts; too wide drops the oldest (at most `droppable`) behind `lead` so the latest stay */
+export const fitTail = (parts: string[], sep: string, width: number, lead: string, droppable = parts.length - 1) => {
   let rest = parts
   let line = rest.join(sep)
-  while (line.length > width && rest.length > 1) {
+  while (line.length > width && parts.length - rest.length < droppable) {
     rest = rest.slice(1)
     line = [lead, ...rest].join(sep)
   }

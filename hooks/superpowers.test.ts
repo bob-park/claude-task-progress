@@ -75,4 +75,6 @@ test('fitTail keeps the latest parts behind a lead', () => {
   expect(fitTail(['a', 'b', 'c'], ' → ', 20, '…')).toBe('a → b → c')
   expect(fitTail(['alpha', 'beta', 'gamma'], ' → ', 14, '…')).toBe('… → gamma')
   expect(fitTail(['✓brainstorm', '✓plan', '●execute'], ' ', 17, '✓…')).toBe('✓… ✓plan ●execute')
+  // only the first `droppable` parts may fold: the current stage and later ones always stay
+  expect(fitTail(['✓aa', '✓bb', '●cccc', '○dddd'], ' ', 10, '✓…', 2)).toBe('✓… ●cccc ○dddd')
 })

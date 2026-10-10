@@ -399,6 +399,38 @@ test('a narrow pane folds the pipeline and skills instead of overflowing', async
   expect((await ui.find({ text: /^… → .*requesting-code-review$/ }))?.text.length).toBeLessThanOrEqual(W - 4)
 })
 
+test('a narrow pane keeps the current stage when it folds the pipeline', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  for (const skill of ['writing-plans', 'subagent-driven-development']) await $.skill.prompt({ skill: `superpowers:${skill}`, text: '' })
+  const ui = await $.ui.mount({ ...pane, props: { ...pane.props, bodyColumns: 20 }, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^✓… ●execute ○review ○finish$/ })).toBeDefined()
+})
+
+test('a running role agent without a task number stays in view after many tasks', async ($, on) => {
+  mock.clock(on)
+  let k = 0
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: `A${++k}` }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  for (let n = 1; n <= 3; n++) {
+    for (const d of [`Implement Task ${n}: x`, `Review Task ${n} (spec + quality)`]) {
+      await $.agent.spawn({ prompt: 'p', description: d } as never)
+      await $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'T', agentId: `A${k}`, reason: 'answer' } as never)
+    }
+  }
+  await $.agent.spawn({ prompt: 'p', description: 'Review code changes' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  // working first, then the latest spawned
+  expect((await ui.findAll({ text: /^. (review|impl) / })).map(r => r.text.split(/ {2,}/)[0])).toEqual([
+    expect.stringMatching(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] review Review code …$/),
+    '✓ review #3',
+    '✓ impl #3',
+    '✓ review #2',
+  ])
+})
+
 test('agents spawned outside superpowers get no role', async ($, on) => {
   mock.clock(on)
   on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'A1' }))

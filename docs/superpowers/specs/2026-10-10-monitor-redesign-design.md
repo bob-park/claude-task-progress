@@ -120,7 +120,7 @@ add to `extras` (shown as `+ tdd`, `+ debugging`, `+ verification`).
 - spike, or no path yet: only the stages in `stages`
 
 A drawn stage before `current` is `✓` (a skipped one counts as passed), `current` is `●`
-(the spinner while busy), the rest `○`. Too wide for the pane: the leading done stages collapse to `✓…`.
+(the spinner while busy), the rest `○`. Too wide for the pane: the leading done stages collapse to `✓…`; the current and later stages never fold (the line is clipped instead).
 
 **Path badge.** While `current` is `brainstorm`, each main-loop `turn.complete` result
 text is matched with `/\b(spike|bounded|architectural)\b/gi`; the last match sets
@@ -152,8 +152,8 @@ W is `bodyColumns`, as today.
 - **SUPERPOWERS** (when `sp.stages` is non-empty): title left, path badge right
   (uppercase); pipeline line; when a superpowers plan is active, the progress bar and
   current task line from today's TASKS code (sweep animation included), or
-  `✓ 모두 완료 · <time>` from `sp.doneAt`; role agents, highest task number first, at most
-  4 lines, as `icon role #N … Model|approved|issues mm:ss` (a review that wants fixes
+  `✓ 모두 완료 · <time>` from `sp.doneAt`; role agents, working ones first then the latest
+  spawned, at most 4 lines, as `icon role #N … Model|approved|issues mm:ss` (a review that wants fixes
   shows `⚠`; one without a task number shows its description); `extras` on one line.
 - **TASKS** (todos or a plan-mode plan): today's bar and current line; done time from `main.doneAt`.
 - **AGENTS** (any agent without a role): running and waiting ones first (latest on
