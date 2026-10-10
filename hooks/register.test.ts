@@ -49,7 +49,7 @@ test('tasks panel shows done/total next to the bar and the current step below', 
 
   await write([todo('a', 'completed')])
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓ 모두 완료 · \d{2}\.\d{2}\.\d{2} (AM|PM) \d{2}:\d{2}$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ completed · \d{2}\.\d{2}\.\d{2} (AM|PM) \d{2}:\d{2}$/ })).toBeDefined()
 })
 
 test('done time reads as yy.mm.dd AM/PM hh:mm', () => {
@@ -122,7 +122,7 @@ test('a superpowers plan shows under SUPERPOWERS, not TASKS, with its done time'
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^⚡ SUPERPOWERS$/ })).toBeDefined()
   expect(await ui.find({ text: /TASKS$/ })).toBeUndefined()
-  expect(await ui.find({ text: /^✓ 모두 완료 · \d{2}\.\d{2}\.\d{2} (AM|PM) \d{2}:\d{2}$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ completed · \d{2}\.\d{2}\.\d{2} (AM|PM) \d{2}:\d{2}$/ })).toBeDefined()
 })
 
 test('plan mode: ExitPlanMode makes its file the active plan and asks Claude to tick steps', async ($, on) => {

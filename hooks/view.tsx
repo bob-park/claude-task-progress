@@ -128,7 +128,7 @@ export const progressLines = ({ Text }: UI, list: Task[], doneAt: number | null,
       <Text dimColor>{` · ${percent}%`}</Text>
     </Text>,
     done === total ? (
-      <Text key="now" color="green">{doneAt !== null ? `✓ 모두 완료 · ${doneTime(doneAt)}` : '✓ 모두 완료'}</Text>
+      <Text key="now" color="green">{doneAt !== null ? `✓ completed · ${doneTime(doneAt)}` : '✓ completed'}</Text>
     ) : active.length > 0 ? (
       <Text key="now" color="yellow" wrap="truncate">{`${v.busy ? v.spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
     ) : (
