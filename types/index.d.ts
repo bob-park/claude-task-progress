@@ -28,6 +28,14 @@ export type Main = {
   doneAt: number | null
 }
 
+export type Stage = 'brainstorm' | 'spec' | 'plan' | 'worktree' | 'execute' | 'review' | 'finish'
+export type SpPath = 'spike' | 'bounded' | 'architectural'
+/** What superpowers dispatched an agent for: SDD's implementer, or any review */
+export type Role = 'impl' | 'review'
+
+/** The superpowers workflow so far; empty `stages` until a superpowers skill runs */
+export type Sp = { path?: SpPath; stages: Stage[]; current?: Stage; extras: string[]; doneAt: number | null }
+
 declare module 'claude-code' {
   interface PluginState {
     'task-progress': { tasks: Record<string, Task>; main: Main; plan: Plan; agents: Record<string, AgentRun> }
