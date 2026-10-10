@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { doneTime } from './register'
+import { doneTime } from './view'
 
 const pane = {
   plugin: 'task-progress',

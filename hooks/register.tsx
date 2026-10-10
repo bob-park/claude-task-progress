@@ -3,6 +3,7 @@ import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claud
 
 import type { AgentRun, Main, Plan, Task } from '../types'
 import { isPlanPath, keepCompleted, ledgerOwns, ledgerPath, parsePlan } from './plan'
+import { activityPanel, agentsPanel, FRAME_MS, mainPanel, SPINNER, tasksPanel } from './view'
 
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {} as Record<string, Task>)
 const plan = atom({ plugin: 'task-progress', key: 'plan' } as const, { path: '', tasks: [] } as Plan)
@@ -44,25 +45,6 @@ const main = atom({ plugin: 'task-progress', key: 'main' } as const, DEFAULT_MAI
 const PANE = 'task-progress'
 const PANE_COLUMNS = 48
 
-// Formatting below is adapted from Flightdeck (MIT, github.com/scasella/claude-flightdeck)
-const prettyModel = (id: string) => {
-  if (!id) return '—'
-  const m = /claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?![\d])/i.exec(id)
-  return m?.[1] ? `${m[1].charAt(0).toUpperCase()}${m[1].slice(1).toLowerCase()} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : id.slice(0, 22)
-}
-const kTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
-const fmtUsd = (n: number) => (n >= 100 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`)
-const gauge = (pct: number, width: number) => {
-  const full = Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
-  return { on: '▰'.repeat(full), off: '▱'.repeat(width - full) }
-}
-const limitLabel = (kind: string) =>
-  kind
-    .replace(/five[_ -]?hours?/i, '5h')
-    .replace(/seven[_ -]?days?/i, '7d')
-    .replace(/[_-]+/g, ' ')
-    .trim()
-
 const setMain = ($: EngineInterface, patch: (m: Main) => Partial<Main>) => update($, main, m => ({ ...DEFAULT_MAIN, ...m, ...patch({ ...DEFAULT_MAIN, ...m }) }))
 
 type Usage = Awaited<ReturnType<EngineInterface['session']['usage']>>
@@ -75,8 +57,6 @@ const usageOf = (u: Pick<Usage, 'context' | 'cost' | 'rateLimits'>): Partial<Mai
 })
 
 // while a turn runs the pane redraws on a clock so the spinner and shimmer move
-const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-const FRAME_MS = 100
 const frame = () => Math.floor(Date.now() / FRAME_MS)
 let ticker: Timer | undefined
 // the clock runs while the main turn or any agent is working
@@ -85,18 +65,6 @@ const animate = async ($: EngineInterface) => {
   const on = !!m?.isRunning || Object.values(a ?? {}).some(r => r.endedAt === undefined)
   if (on) ticker ??= $.clock.every(FRAME_MS, () => $.ui.invalidate('ui.render'))
   else ticker = void ticker?.cancel()
-}
-
-const mmss = (ms: number) => {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-}
-// `오후 2:05`, and `10월 9일 오후 2:05` once it is another day
-export const doneTime = (at: number, now: number) => {
-  const d = new Date(at)
-  const h = d.getHours()
-  const day = d.toDateString() === new Date(now).toDateString() ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 `
-  return `${day}${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 // todos win, unless all are done and a plan still has open work
@@ -116,8 +84,6 @@ const stampDone = async ($: EngineInterface) => {
     await setMain($, () => ({ doneAt: at }))
   } else if (!allDone && stamped) await setMain($, () => ({ doneAt: null }))
 }
-
-const numbered = (t: Task) => (t.n ? `#${t.n} ${t.label}` : t.label)
 
 // `Bash · Run tests`, `Read · plan.ts`: the tool and the most telling input it has
 const activityOf = (e: { tool: string; description?: unknown; file_path?: unknown; pattern?: unknown; command?: unknown }) => {
@@ -269,139 +235,20 @@ export const register: Register = on => {
       $.clock.now(),
     ])
     const list = shownTasks(todos, p)
-    const { Box, Text } = $.ui.resolve(e)
-    const W = Math.max(30, e.props.bodyColumns)
+    const ui = $.ui.resolve(e)
+    const { Box } = ui
     const f = frame()
-    const spin = SPINNER[f % SPINNER.length]
     // a background agent keeps the session working after the main turn ends
-    const busy = m.isRunning || runs.length > 0
-
-    // ---- main (layout from Flightdeck's main panel)
-    const effortN = { low: 1, medium: 2, high: 3, xhigh: 4, max: 4 }[m.effort] ?? 0
-    const ctx = m.pct !== null ? gauge(m.pct, 10) : null
-    const mainPanel = (
-      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} width={W}>
-        <Box justifyContent="space-between">
-          <Text color="cyan" bold>{`${prettyModel(m.model)} · main`}</Text>
-          <Text color={busy ? 'cyan' : undefined} dimColor={!busy}>{busy ? `${spin} working` : '○ idle'}</Text>
-        </Box>
-        <Text wrap="truncate">
-          <Text dimColor>effort </Text>
-          <Text color="cyan">{'▮'.repeat(effortN) + '▯'.repeat(4 - effortN)} </Text>
-          <Text color="cyan" bold>{m.effort || '—'}</Text>
-          {m.mode ? <Text dimColor>{`   mode ${m.mode}`}</Text> : null}
-          <Text dimColor>{`   ${m.steps} req`}</Text>
-        </Text>
-        {ctx ? (
-          <Text wrap="truncate">
-            <Text dimColor>ctx </Text>
-            <Text color={m.pct !== null && m.pct >= 80 ? 'red' : 'cyan'}>{ctx.on}</Text>
-            <Text dimColor>{ctx.off}</Text>
-            <Text bold>{` ${Math.round(m.pct ?? 0)}%`}</Text>
-            {m.tokens !== null ? <Text dimColor>{` ${kTokens(m.tokens)}/${kTokens(m.window)}`}</Text> : null}
-            {m.compactions > 0 ? <Text color="yellow">{`  ⟲${m.compactions}`}</Text> : null}
-          </Text>
-        ) : null}
-        {m.costUsd !== null || m.limits.length > 0 ? (
-          <Text wrap="truncate">
-            {m.costUsd !== null ? <Text>{`${fmtUsd(m.costUsd)}   `}</Text> : null}
-            {m.limits.slice(0, 2).map(l => {
-              const g = gauge(l.pct, 5)
-              return (
-                <Text key={l.kind}>
-                  <Text dimColor>{`${limitLabel(l.kind)} `}</Text>
-                  <Text color={l.pct >= 80 ? 'red' : 'cyan'}>{g.on}</Text>
-                  <Text dimColor>{`${g.off} ${Math.round(l.pct)}%  `}</Text>
-                </Text>
-              )
-            })}
-          </Text>
-        ) : null}
-      </Box>
-    )
-
-    // ---- agents: `1: label --- Model mm:ss`, the right column lined up
-    const agentsPanel =
-      runs.length > 0 ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={W}>
-          <Text color="magenta" bold>AGENTS</Text>
-          {runs.map(r => {
-            const right = ` ${prettyModel(r.model)} ${mmss(now - r.startedAt)}`
-            const room = W - 4 - 2 - right.length - 4 // icon, then ` ---` at the least
-            let left = `${r.n}: ${r.label}`
-            if (left.length > room) left = `${left.slice(0, Math.max(0, room - 1))}…`
-            return (
-              <Text key={String(r.n)} color="yellow" wrap="truncate">
-                {`${spin} ${left} ${'-'.repeat(Math.max(3, room - left.length + 3))}${right}`}
-              </Text>
-            )
-          })}
-        </Box>
-      ) : null
-
+    const v = { W: Math.max(30, e.props.bodyColumns), f, spin: SPINNER[f % SPINNER.length]!, busy: m.isRunning || runs.length > 0, now }
+    const allDone = list.length > 0 && list.every(t => t.status === 'completed')
     // what Claude is doing right now, when no task says it
-    const activityPanel =
-      m.isRunning && m.activity ? (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} width={W}>
-          <Text color="yellow" wrap="truncate">{`${spin} ${m.activity}`}</Text>
-        </Box>
-      ) : null
-
-    if (list.length === 0) {
-      return (
-        <Box flexDirection="column">
-          {mainPanel}
-          {activityPanel}
-          {agentsPanel}
-        </Box>
-      )
-    }
-
-    // ---- tasks
-    const total = list.length
-    const done = list.filter(t => t.status === 'completed').length
-    const active = list.filter(t => t.status === 'in_progress')
-    const barW = Math.max(10, W - 4 - ` ${total}/${total} · 100%`.length - 1)
-    const filled = Math.round((done / total) * barW)
-    const activeCells = Math.round(((done + active.length) / total) * barW) - filled
-    const percent = Math.round((done / total) * 100)
-    const allDone = done === total
-    const next = list.find(t => t.status === 'pending')
-    // a bright cell sweeps across the in-progress part of the bar while working
-    const sweep = busy && activeCells > 0 ? f % activeCells : -1
-
+    const showActivity = m.isRunning && !!m.activity && (list.length === 0 || allDone)
     return (
       <Box flexDirection="column">
-        {mainPanel}
-        <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1} width={W}>
-          <Text color="green" bold>{allDone ? '✓ TASKS' : 'TASKS'}</Text>
-          {/* count sits right after the bar so the eye doesn't travel */}
-          <Text wrap="truncate">
-            <Text color="green">{'█'.repeat(filled)}</Text>
-            {sweep >= 0 ? (
-              <Text color="yellow">
-                {'▓'.repeat(sweep)}
-                <Text bold>█</Text>
-                {'▓'.repeat(activeCells - sweep - 1)}
-              </Text>
-            ) : (
-              <Text color="yellow">{'▓'.repeat(activeCells)}</Text>
-            )}
-            <Text dimColor>{'░'.repeat(barW - filled - activeCells)}</Text>
-            <Text bold color="blue">{` ${done}/${total}`}</Text>
-            <Text dimColor>{` · ${percent}%`}</Text>
-          </Text>
-          {allDone ? (
-            <Text color="green">{m.doneAt !== null ? `✓ 모두 완료 · ${doneTime(m.doneAt, now)}` : '✓ 모두 완료'}</Text>
-          ) : active.length > 0 ? (
-            <Text color="yellow" wrap="truncate">{`${busy ? spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
-          ) : (
-            <Text dimColor wrap="truncate">{`○ 다음: ${next ? numbered(next) : '—'}`}</Text>
-          )}
-          {p?.finishing ? <Text color="cyan" wrap="truncate">{`${busy ? spin : '⎇'} finishing-a-development-branch`}</Text> : null}
-        </Box>
-        {allDone ? activityPanel : null}
-        {agentsPanel}
+        {mainPanel(ui, m, v)}
+        {list.length > 0 ? tasksPanel(ui, list, m.doneAt, !!p?.finishing, v) : null}
+        {showActivity ? activityPanel(ui, m.activity, v) : null}
+        {runs.length > 0 ? agentsPanel(ui, runs, v) : null}
       </Box>
     )
   })
