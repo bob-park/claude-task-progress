@@ -35,12 +35,12 @@ export const mmss = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
-// `오후 2:05`, and `10월 9일 오후 2:05` once it is another day
-export const doneTime = (at: number, now: number) => {
+// `26.10.09 PM 02:05`
+export const doneTime = (at: number) => {
   const d = new Date(at)
   const h = d.getHours()
-  const day = d.toDateString() === new Date(now).toDateString() ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 `
-  return `${day}${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`
+  const p2 = (n: number) => String(n).padStart(2, '0')
+  return `${p2(d.getFullYear() % 100)}.${p2(d.getMonth() + 1)}.${p2(d.getDate())} ${h < 12 ? 'AM' : 'PM'} ${p2(h % 12 || 12)}:${p2(d.getMinutes())}`
 }
 
 const numbered = (t: Task) => (t.n ? `#${t.n} ${t.label}` : t.label)
@@ -128,7 +128,7 @@ export const progressLines = ({ Text }: UI, list: Task[], doneAt: number | null,
       <Text dimColor>{` · ${percent}%`}</Text>
     </Text>,
     done === total ? (
-      <Text key="now" color="green">{doneAt !== null ? `✓ 모두 완료 · ${doneTime(doneAt, v.now)}` : '✓ 모두 완료'}</Text>
+      <Text key="now" color="green">{doneAt !== null ? `✓ 모두 완료 · ${doneTime(doneAt)}` : '✓ 모두 완료'}</Text>
     ) : active.length > 0 ? (
       <Text key="now" color="yellow" wrap="truncate">{`${v.busy ? v.spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
     ) : (

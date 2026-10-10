@@ -49,14 +49,13 @@ test('tasks panel shows done/total next to the bar and the current step below', 
 
   await write([todo('a', 'completed')])
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓ 모두 완료 · (오전|오후) \d{1,2}:\d{2}$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 모두 완료 · \d{2}\.\d{2}\.\d{2} (AM|PM) \d{2}:\d{2}$/ })).toBeDefined()
 })
 
-test('done time reads as 오전/오후 h:mm, with the date once it is another day', () => {
-  const at = new Date(2026, 9, 9, 14, 5).getTime()
-  expect(doneTime(at, at + 60_000)).toBe('오후 2:05')
-  expect(doneTime(new Date(2026, 9, 9, 0, 30).getTime(), at)).toBe('오전 12:30')
-  expect(doneTime(at, new Date(2026, 9, 10, 9, 0).getTime())).toBe('10월 9일 오후 2:05')
+test('done time reads as yy.mm.dd AM/PM hh:mm', () => {
+  expect(doneTime(new Date(2026, 9, 9, 14, 5).getTime())).toBe('26.10.09 PM 02:05')
+  expect(doneTime(new Date(2026, 0, 2, 0, 30).getTime())).toBe('26.01.02 AM 12:30')
+  expect(doneTime(new Date(2026, 9, 9, 12, 0).getTime())).toBe('26.10.09 PM 12:00')
 })
 
 const SP = '/r/docs/superpowers/plans/2026-01-01-x.md'
@@ -123,7 +122,7 @@ test('a superpowers plan shows under SUPERPOWERS, not TASKS, with its done time'
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^⚡ SUPERPOWERS$/ })).toBeDefined()
   expect(await ui.find({ text: /TASKS$/ })).toBeUndefined()
-  expect(await ui.find({ text: /^✓ 모두 완료 · (오전|오후) \d{1,2}:\d{2}$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 모두 완료 · \d{2}\.\d{2}\.\d{2} (AM|PM) \d{2}:\d{2}$/ })).toBeDefined()
 })
 
 test('plan mode: ExitPlanMode makes its file the active plan and asks Claude to tick steps', async ($, on) => {
