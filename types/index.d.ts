@@ -6,7 +6,19 @@ export type Task = { status: TaskStatus; label: string; n?: string }
 export type AgentStatus = 'running' | 'waiting' | 'done' | 'failed'
 
 /** A subagent the model spawned; kept once it ends (`endedAt`), up to the latest 20 */
-export type AgentRun = { n: number; label: string; model: string; startedAt: number; endedAt?: number; status: AgentStatus }
+export type AgentRun = {
+  n: number
+  label: string
+  model: string
+  startedAt: number
+  endedAt?: number
+  status: AgentStatus
+  /** Set when superpowers dispatched it; such an agent shows under SUPERPOWERS, not AGENTS */
+  role?: Role
+  taskN?: string
+  /** A reviewer's report: approved, or issues to fix */
+  verdict?: 'ok' | 'issues'
+}
 
 /** A skill the session ran, in order */
 export type SkillUse = { name: string; at: number }
@@ -14,8 +26,8 @@ export type SkillUse = { name: string; at: number }
 /** A main-loop tool call: `Bash · Run tests` */
 export type Activity = { id: number; at: number; label: string; status: 'running' | 'ok' | 'error' }
 
-/** The plan file progress is read from when there are no todos; `finishing` once finishing-a-development-branch ran on it */
-export type Plan = { path: string; tasks: Task[]; finishing?: boolean }
+/** The active plan: a superpowers plan shows under SUPERPOWERS, a plan-mode plan under TASKS */
+export type Plan = { path: string; tasks: Task[] }
 
 /** Main-loop vitals, drawn like Flightdeck's main panel */
 export type Main = {
@@ -51,6 +63,7 @@ declare module 'claude-code' {
       agents: Record<string, AgentRun>
       skills: SkillUse[]
       activity: Activity[]
+      sp: Sp
     }
   }
 }

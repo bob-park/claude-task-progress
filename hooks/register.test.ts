@@ -106,10 +106,22 @@ test('superpowers plan fills the tasks panel and follows the ledger', async ($, 
   expect(await ui.find({ text: /^ 2\/3$/ })).toBeDefined()
   await ui.unmount()
 
-  // todos win over the plan
+  // todos get their own TASKS section beside the plan
   await $.tool.call({ tool: 'TodoWrite', todos: [todo('Only', 'pending')] })
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^ 0\/1$/ })).toBeDefined()
+  expect(await ui.find({ text: /^ 2\/3$/ })).toBeDefined()
+})
+
+test('a superpowers plan shows under SUPERPOWERS, not TASKS, with its done time', async ($, on) => {
+  mock.clock(on)
+  on('fs.read', (_$, e) => (e.path === SP ? { value: '### Task 1: A\n- [x] a\n' } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  await $.tool.call({ tool: 'Read', file_path: SP } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^⚡ SUPERPOWERS$/ })).toBeDefined()
+  expect(await ui.find({ text: /TASKS$/ })).toBeUndefined()
+  expect(await ui.find({ text: /^✓ 모두 완료 · (오전|오후) \d{1,2}:\d{2}$/ })).toBeDefined()
 })
 
 test('plan mode: ExitPlanMode makes its file the active plan and asks Claude to tick steps', async ($, on) => {
@@ -293,7 +305,7 @@ test('an agent waiting on its background work stays running, and a resumed one r
   expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 2: Lint / })).toBeDefined()
 })
 
-test('finishing-a-development-branch shows under the tasks until another plan', async ($, on) => {
+test('finish shows on the pipeline until another plan starts a new cycle', async ($, on) => {
   mock.clock(on)
   const B = '/r/docs/superpowers/plans/2026-02-01-next.md'
   on('fs.read', (_$, e) => (e.path === SP || e.path === B ? { value: '### Task 1: A\n- [x] a\n' } : { deny: `ENOENT: ${e.path}` }))
@@ -302,14 +314,97 @@ test('finishing-a-development-branch shows under the tasks until another plan', 
 
   await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
   await $.skill.prompt({ skill: 'superpowers:finishing-a-development-branch', text: '' })
-  await $.tool.call({ tool: 'Read', file_path: SP } as never)
+  await $.tool.call({ tool: 'Read', file_path: SP } as never) // the same plan again: still finishing
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^⎇ finishing-a-development-branch$/ })).toBeDefined()
+  expect(await ui.find({ text: /●finish$/ })).toBeDefined()
   await ui.unmount()
 
   await $.tool.call({ tool: 'Write', file_path: B, content: '' } as never)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^⎇ finishing-a-development-branch$/ })).toBeUndefined()
+  expect(await ui.find({ text: /●plan ○execute ○review ○finish$/ })).toBeDefined()
+})
+
+const sdd = (answer = '') => ({ answer, durationMs: 0, isAborted: false, turnId: 'T', reason: 'answer' }) as never
+
+test('superpowers section: hidden until a superpowers skill, then pipeline and path badge', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.skill.prompt({ skill: 'commit', text: '' })
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /SUPERPOWERS/ })).toBeUndefined()
+  await ui.unmount()
+
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^⚡ SUPERPOWERS$/ })).toBeDefined()
+  expect(await ui.find({ text: /^●brainstorm$/ })).toBeDefined()
+  await ui.unmount()
+
+  await $.turn.complete(sdd('This looks bounded, so I will present a short design here.'))
+  await $.skill.prompt({ skill: 'superpowers:test-driven-development', text: '' })
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^BOUNDED$/ })).toBeDefined()
+  expect(await ui.find({ text: /^●brainstorm ○execute ○finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^\+ tdd$/ })).toBeDefined()
+  await ui.unmount()
+
+  // past brainstorming a reply no longer moves the badge
+  await $.skill.prompt({ skill: 'superpowers:executing-plans', text: '' })
+  await $.turn.complete(sdd('a spike would be overkill'))
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^BOUNDED$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓brainstorm ●execute ○finish$/ })).toBeDefined()
+})
+
+test('a spec makes the path architectural', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  on('tool.call', () => ({ result: {} }) as never)
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
+  await $.tool.call({ tool: 'Write', file_path: '/r/docs/superpowers/specs/2026-01-01-x-design.md', content: '' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^ARCHITECTURAL$/ })).toBeDefined()
+  // too wide for the pane: the done stages fold into ✓…
+  expect(await ui.find({ text: /^✓… ●spec ○plan ○execute ○review ○finish$/ })).toBeDefined()
+})
+
+test('SDD agents show by role under superpowers, not under agents', async ($, on) => {
+  mock.clock(on)
+  const ids: Record<string, string> = { 'Implement Task 4: Wire detector': 'I4', 'Review Task 3 (spec + quality)': 'R3', 'Explore auth': 'X1' }
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', (_$, e) => ({ model: 'claude-haiku-5-5', agentId: ids[e.description] }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  for (const description of Object.keys(ids)) await $.agent.spawn({ prompt: 'p', description } as never)
+  await $.turn.complete({ ...(sdd('**Task quality:** Needs fixes') as object), agentId: 'R3' } as never)
+
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] impl #4 +Haiku 5\.5 00:00$/ })).toBeDefined()
+  expect(await ui.find({ text: /^⚠ review #3 +issues 00:00$/ })).toBeDefined()
+  // AGENTS lists only the plain one, but counts all three
+  expect(await ui.find({ text: /^  2 running · 1 done$/ })).toBeDefined()
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 3: Explore auth / })).toBeDefined()
+  expect(await ui.find({ text: /\d: (Implement|Review) Task/ })).toBeUndefined()
+})
+
+test('a narrow pane folds the pipeline and skills instead of overflowing', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  for (const skill of ['brainstorming', 'writing-plans', 'using-git-worktrees', 'subagent-driven-development', 'requesting-code-review'])
+    await $.skill.prompt({ skill: `superpowers:${skill}`, text: '' })
+  const ui = await $.ui.mount({ ...pane, props: { ...pane.props, bodyColumns: 20 }, surface: 'terminal' } as never)
+  const W = 30 // the pane never draws narrower
+  expect((await ui.find({ text: /^✓… .*●review ○finish$/ }))?.text.length).toBeLessThanOrEqual(W - 4)
+  expect((await ui.find({ text: /^… → .*requesting-code-review$/ }))?.text.length).toBeLessThanOrEqual(W - 4)
+})
+
+test('agents spawned outside superpowers get no role', async ($, on) => {
+  mock.clock(on)
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'A1' }))
+  await $.agent.spawn({ prompt: 'p', description: 'Review diff' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 1: Review diff / })).toBeDefined()
 })
 
 test('activity shows alongside open tasks', async ($, on) => {

@@ -1,16 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Activity, AgentRun, AgentStatus, Main, Plan, SkillUse, Task } from '../types'
+import type { Activity, AgentRun, AgentStatus, Main, Plan, SkillUse, Sp, Task } from '../types'
 import { isPlanPath, keepCompleted, ledgerOwns, ledgerPath, parsePlan } from './plan'
-import { skillName } from './superpowers'
-import { activityPanel, agentsPanel, FRAME_MS, mainPanel, skillsPanel, SPINNER, tasksPanel } from './view'
+import { addExtra, EMPTY_SP, extraOf, isSpecPath, pathFrom, reach, roleOf, skillName, stageOf, taskNOf, verdictOf } from './superpowers'
+import { activityPanel, agentsPanel, FRAME_MS, mainPanel, skillsPanel, spPanel, SPINNER, tasksPanel } from './view'
 
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {} as Record<string, Task>)
 const plan = atom({ plugin: 'task-progress', key: 'plan' } as const, { path: '', tasks: [] } as Plan)
 const agents = atom({ plugin: 'task-progress', key: 'agents' } as const, {} as Record<string, AgentRun>)
 const skills = atom({ plugin: 'task-progress', key: 'skills' } as const, [] as SkillUse[])
 const activity = atom({ plugin: 'task-progress', key: 'activity' } as const, [] as Activity[])
+const sp = atom({ plugin: 'task-progress', key: 'sp' } as const, EMPTY_SP)
+const updateSp = ($: EngineInterface, patch: (s: Sp) => Sp) => update($, sp, s => patch({ ...EMPTY_SP, ...s }))
 
 const MAX_AGENTS = 20
 const MAX_ACTIVITY = 10
@@ -37,7 +39,7 @@ const refreshPlan = async ($: EngineInterface, path: string) => {
     const tasks = parsePlan(text, owned)
     // same plan (maybe now in the main checkout): done stays done
     const same = !!prev?.path && base(prev.path) === base(path)
-    return { path, tasks: same ? keepCompleted(prev.tasks, tasks) : tasks, ...(same && prev.finishing ? { finishing: true } : {}) }
+    return { path, tasks: same ? keepCompleted(prev.tasks, tasks) : tasks }
   })
 }
 
@@ -82,22 +84,28 @@ const animate = async ($: EngineInterface) => {
   else ticker = void ticker?.cancel()
 }
 
-// todos win, unless all are done and a plan still has open work
+// a superpowers plan has an SDD ledger beside it; a plan-mode plan has none
+const isSpPlan = (p: Plan | undefined) => !!p?.path && ledgerPath(p.path) !== null
+const spTasks = (p: Plan | undefined) => (isSpPlan(p) ? p!.tasks : [])
+
+// TASKS: todos win, unless all are done and a plan-mode plan still has open work
 const shownTasks = (todos: Task[], p: Plan | undefined) => {
-  const planOpen = (p?.tasks ?? []).some(t => t.status !== 'completed')
-  return todos.some(t => t.status !== 'completed') || (todos.length > 0 && !planOpen) ? todos : (p?.tasks ?? [])
+  const pm = isSpPlan(p) ? [] : (p?.tasks ?? [])
+  const planOpen = pm.some(t => t.status !== 'completed')
+  return todos.some(t => t.status !== 'completed') || (todos.length > 0 && !planOpen) ? todos : pm
 }
 
-// the moment the shown list became all done; cleared once something is open again
+const allDone = (list: Task[]) => list.length > 0 && list.every(t => t.status === 'completed')
+
+// the moment each list became all done; cleared once something is open again
 const stampDone = async ($: EngineInterface) => {
-  const [todos, p, m] = await Promise.all([read($, tasks).then(t => Object.values(t ?? {})), read($, plan), read($, main)])
-  const list = shownTasks(todos, p)
-  const allDone = list.length > 0 && list.every(t => t.status === 'completed')
-  const stamped = typeof m?.doneAt === 'number'
-  if (allDone && !stamped) {
-    const at = await $.clock.now()
-    await setMain($, () => ({ doneAt: at }))
-  } else if (!allDone && stamped) await setMain($, () => ({ doneAt: null }))
+  const [todos, p, m, s] = await Promise.all([read($, tasks).then(t => Object.values(t ?? {})), read($, plan), read($, main), read($, sp)])
+  const tasksDone = allDone(shownTasks(todos, p))
+  const planDone = allDone(spTasks(p))
+  if (tasksDone === (typeof m?.doneAt === 'number') && planDone === (typeof s?.doneAt === 'number')) return
+  const at = await $.clock.now()
+  if (tasksDone !== (typeof m?.doneAt === 'number')) await setMain($, () => ({ doneAt: tasksDone ? at : null }))
+  if (planDone !== (typeof s?.doneAt === 'number')) await updateSp($, x => ({ ...x, doneAt: planDone ? at : null }))
 }
 
 // `Bash · Run tests`, `Read · plan.ts`: the tool and the most telling input it has
@@ -148,9 +156,15 @@ export const register: Register = on => {
       const status: AgentStatus = waiting ? 'waiting' : e.reason === 'error' || e.reason === 'aborted' ? 'failed' : 'done'
       await update($, agents, all => {
         const r = all?.[agentId]
-        return r ? { ...all, [agentId]: { ...r, status, ...(waiting ? {} : { endedAt: at }) } } : all
+        const verdict = r?.role === 'review' && !waiting ? verdictOf(e.answer) : undefined
+        return r ? { ...all, [agentId]: { ...r, status, ...(waiting ? {} : { endedAt: at }), ...(verdict ? { verdict } : {}) } } : all
       })
-    } else await setMain($, () => ({ isRunning: false }))
+    } else {
+      await setMain($, () => ({ isRunning: false }))
+      // brainstorming says out loud which path it takes
+      const path = pathFrom(e.answer)
+      if (path) await updateSp($, s => (s.current === 'brainstorm' ? { ...s, path } : s))
+    }
     await animate($)
     return done
   })
@@ -175,11 +189,14 @@ export const register: Register = on => {
     const { agentId, model = '' } = spawned as { agentId?: string; model?: string }
     if (agentId) {
       const startedAt = await $.clock.now()
+      // while superpowers runs, its implementers and reviewers get a role
+      const role = (await read($, sp))?.stages.length ? roleOf(e.description) : undefined
+      const taskN = role ? (taskNOf(e.description) ?? taskNOf(e.prompt)) : undefined
       // next after the highest still listed: one left running keeps its number
       await update($, agents, all =>
         trimAgents({
           ...all,
-          [agentId]: { n: Math.max(0, ...Object.values(all ?? {}).map(r => r.n)) + 1, label: e.description || e.subagentType, model, startedAt, status: 'running' },
+          [agentId]: { n: Math.max(0, ...Object.values(all ?? {}).map(r => r.n)) + 1, label: e.description || e.subagentType, model, startedAt, status: 'running', ...(role ? { role } : {}), ...(taskN ? { taskN } : {}) },
         }),
       )
       await animate($)
@@ -192,7 +209,10 @@ export const register: Register = on => {
     const name = skillName(e.skill)
     // the same skill twice in a row is one entry
     await update($, skills, all => (all?.at(-1)?.name === name ? all : [...(all ?? []), { name, at }].slice(-MAX_SKILLS)))
-    if (/(^|:)finishing-a-development-branch$/.test(e.skill)) await update($, plan, p => ({ ...(p ?? { path: '', tasks: [] }), finishing: true }))
+    const stage = stageOf(e.skill)
+    const extra = extraOf(e.skill)
+    if (stage) await updateSp($, s => reach(s, stage))
+    else if (extra) await updateSp($, s => addExtra(s, extra))
     return next(e)
   })
 
@@ -245,21 +265,30 @@ export const register: Register = on => {
     const planned = e.tool === 'ExitPlanMode' ? (ran.result as BuiltinToolResults['ExitPlanMode'] | undefined)?.filePath : undefined
     // Read too: a plan written in an earlier session is executed by reading it
     const written = (e.tool === 'Write' || e.tool === 'Edit' || e.tool === 'Read') && isPlanPath(e.file_path) ? e.file_path : undefined
-    const path = planned ?? written ?? (await read($, plan))?.path
+    const prev = await read($, plan)
+    const path = planned ?? written ?? prev?.path
     if (path) await refreshPlan($, path)
+    if ((e.tool === 'Write' || e.tool === 'Edit') && isSpecPath(e.file_path)) await updateSp($, s => reach(s, 'spec'))
+    // a superpowers plan reaches the plan stage; one already reached is only re-read
+    const base = (p: string) => p.slice(p.lastIndexOf('/') + 1)
+    if (written && ledgerPath(written)) {
+      const fresh = !prev?.path || base(prev.path) !== base(written)
+      await updateSp($, s => (fresh || !s.stages.includes('plan') ? reach(s, 'plan') : s))
+    }
     await stampDone($)
     if (!planned) return ran
     return { ...ran, context: [...(ran.context ?? []), `Mark each step done by ticking it (- [x], or 1. [x] for numbered steps) in ${planned} as you finish it.`] }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [m, todos, p, runs, used, acts, now] = await Promise.all([
+    const [m, todos, p, runs, used, acts, s, now] = await Promise.all([
       read($, main).then(x => ({ ...DEFAULT_MAIN, ...x })),
       read($, tasks).then(Object.values),
       read($, plan),
       read($, agents).then(a => Object.values(a ?? {})),
       read($, skills).then(s => s ?? []),
       read($, activity).then(a => a ?? []),
+      read($, sp).then(x => ({ ...EMPTY_SP, ...x })),
       $.clock.now(),
     ])
     const list = shownTasks(todos, p)
@@ -271,8 +300,9 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {mainPanel(ui, m, v)}
-        {list.length > 0 ? tasksPanel(ui, list, m.doneAt, !!p?.finishing, v) : null}
-        {runs.length > 0 ? agentsPanel(ui, runs, v) : null}
+        {s.stages.length > 0 ? spPanel(ui, s, spTasks(p), runs, v) : null}
+        {list.length > 0 ? tasksPanel(ui, list, m.doneAt, v) : null}
+        {runs.some(r => !r.role) ? agentsPanel(ui, runs, v) : null}
         {used.length > 0 ? skillsPanel(ui, used.map(u => u.name), v) : null}
         {acts.length > 0 ? activityPanel(ui, acts, v) : null}
       </Box>

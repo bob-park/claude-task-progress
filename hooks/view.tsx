@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { Activity, AgentRun, Main, Task } from '../types'
-import { fitTail } from './superpowers'
+import type { Activity, AgentRun, Main, Sp, Task } from '../types'
+import { fitTail, pipeline } from './superpowers'
 
 /** `$.ui.resolve(e)`: the surface's Box, Text, ... */
 export type UI = ReturnType<EngineInterface['ui']['resolve']>
@@ -138,14 +138,13 @@ export const progressLines = ({ Text }: UI, list: Task[], doneAt: number | null,
 }
 
 // ---- tasks
-export const tasksPanel = (ui: UI, list: Task[], doneAt: number | null, finishing: boolean, v: Frame) => {
+export const tasksPanel = (ui: UI, list: Task[], doneAt: number | null, v: Frame) => {
   const { Box, Text } = ui
   const allDone = list.every(t => t.status === 'completed')
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1} width={v.W}>
       <Text color="green" bold>{allDone ? '✓ TASKS' : 'TASKS'}</Text>
       {progressLines(ui, list, doneAt, v)}
-      {finishing ? <Text color="cyan" wrap="truncate">{`${v.busy ? v.spin : '⎇'} finishing-a-development-branch`}</Text> : null}
     </Box>
   )
 }
@@ -167,15 +166,52 @@ export const agentsPanel = (ui: UI, all: AgentRun[], v: Frame) => {
   const live = all.filter(r => r.status === 'running' || r.status === 'waiting').sort((x, y) => y.startedAt - x.startedAt)
   const ended = all.filter(r => r.status === 'done' || r.status === 'failed').sort((x, y) => (y.endedAt ?? 0) - (x.endedAt ?? 0))
   const failed = ended.filter(r => r.status === 'failed').length
+  // superpowers' own agents show under SUPERPOWERS; the header still counts them
+  const shown = (rs: AgentRun[]) => rs.filter(r => !r.role)
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={v.W}>
       <Text wrap="truncate">
         <Text color="magenta" bold>AGENTS</Text>
         <Text dimColor>{`  ${live.length} running · ${ended.length - failed} done${failed > 0 ? ` · ${failed} failed` : ''}`}</Text>
       </Text>
-      {[...live, ...ended.slice(0, ENDED_SHOWN)].map(r =>
+      {[...shown(live), ...shown(ended).slice(0, ENDED_SHOWN)].map(r =>
         agentRow(ui, r, `${r.n}: ${r.label}`, ` ${prettyModel(r.model)} ${mmss((r.endedAt ?? v.now) - r.startedAt)}`, '-', v),
       )}
+    </Box>
+  )
+}
+
+// ---- superpowers: path badge, pipeline, plan progress, its agents by role, extras
+const ROLES_SHOWN = 4
+export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame) => {
+  const { Box, Text } = ui
+  const mark = { done: '✓', current: v.busy ? v.spin : '●', todo: '○' }
+  const steps = pipeline(sp).map(s => `${mark[s.state]}${s.stage}`)
+  // the highest task first: that is where SDD is now
+  const roles = runs
+    .filter(r => r.role)
+    .sort((x, y) => Number(y.taskN ?? 0) - Number(x.taskN ?? 0) || y.startedAt - x.startedAt)
+    .slice(0, ROLES_SHOWN)
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={v.W}>
+      <Box justifyContent="space-between">
+        <Text color="yellow" bold>⚡ SUPERPOWERS</Text>
+        {sp.path ? <Text color="magenta" bold>{sp.path.toUpperCase()}</Text> : null}
+      </Box>
+      <Text wrap="truncate">{fitTail(steps, ' ', v.W - 4, '✓…')}</Text>
+      {plan.length > 0 ? progressLines(ui, plan, sp.doneAt, v) : null}
+      {roles.map(r =>
+        agentRow(
+          ui,
+          r,
+          `${r.role} ${r.taskN ? `#${r.taskN}` : r.label}`,
+          ` ${r.verdict ? (r.verdict === 'ok' ? 'approved' : 'issues') : prettyModel(r.model)} ${mmss((r.endedAt ?? v.now) - r.startedAt)}`,
+          ' ',
+          v,
+          r.verdict === 'issues' ? '⚠' : undefined,
+        ),
+      )}
+      {sp.extras.length > 0 ? <Text dimColor wrap="truncate">{sp.extras.map(x => `+ ${x}`).join('  ')}</Text> : null}
     </Box>
   )
 }
@@ -195,8 +231,8 @@ const hhmm = (at: number) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 export const activityPanel = ({ Box, Text }: UI, items: Activity[], v: Frame) => (
-  <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={v.W}>
-    <Text color="yellow" bold>ACTIVITY</Text>
+  <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={v.W}>
+    <Text bold>ACTIVITY</Text>
     {items
       .slice(-ACTIVITY_SHOWN)
       .reverse()

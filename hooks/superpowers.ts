@@ -21,6 +21,8 @@ const EXTRA_OF: Record<string, string> = {
   'verification-before-completion': 'verification',
 }
 
+export const isSpecPath = (p: string) => /\/docs\/superpowers\/specs\/[^/]+\.md$/.test(p)
+
 export const EMPTY_SP: Sp = { stages: [], extras: [], doneAt: null }
 
 /** `superpowers:brainstorming` → `brainstorming` */
