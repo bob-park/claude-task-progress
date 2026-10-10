@@ -17,15 +17,20 @@ const updateSp = ($: EngineInterface, patch: (s: Sp) => Sp) => update($, sp, s =
 const MAX_AGENTS = 20
 const MAX_ACTIVITY = 10
 const MAX_SKILLS = 30
-const live = (r: AgentRun) => r.status === 'running' || r.status === 'waiting'
+/** An agent saved before `status` existed (0.6, kept across a hot reload) reads from its end time */
+export const withStatus = (r: AgentRun): AgentRun => (r.status ? r : { ...r, status: r.endedAt === undefined ? 'running' : 'done' })
+const live = (r: AgentRun) => ['running', 'waiting'].includes(withStatus(r).status)
 // the oldest ended agents go first; running ones always stay
 const trimAgents = (all: Record<string, AgentRun>) => {
   const ended = Object.entries(all).filter(([, r]) => !live(r)).sort(([, a], [, b]) => a.startedAt - b.startedAt)
   const drop = new Set(ended.slice(0, Math.max(0, Object.keys(all).length - MAX_AGENTS)).map(([id]) => id))
   return Object.fromEntries(Object.entries(all).filter(([id]) => !drop.has(id)))
 }
-// ties an activity row to its tool call across `next(e)`
-let seq = 0
+/** Appends a row with the next id after the kept rows: ids outlive a hot reload, a module counter would not */
+export const pushActivity = (all: Activity[], row: Omit<Activity, 'id'>) => {
+  const id = Math.max(0, ...all.map(a => a.id)) + 1
+  return { id, list: [...all, { ...row, id }].slice(-MAX_ACTIVITY) }
+}
 
 // a failed read keeps what the pane already shows
 const refreshPlan = async ($: EngineInterface, path: string) => {
@@ -189,9 +194,13 @@ export const register: Register = on => {
     const { agentId, model = '' } = spawned as { agentId?: string; model?: string }
     if (agentId) {
       const startedAt = await $.clock.now()
-      // while superpowers runs, its implementers and reviewers get a role
-      const role = (await read($, sp))?.stages.length ? roleOf(e.description) : undefined
-      const taskN = role ? (taskNOf(e.description) ?? taskNOf(e.prompt)) : undefined
+      // while superpowers runs (until it finishes), its implementers and reviewers get a role
+      const s = await read($, sp)
+      const role = s?.stages.length && s.current !== 'finish' ? roleOf(e.description) : undefined
+      // the description alone: prompts quote plan text, Task numbers included
+      const taskN = role ? taskNOf(e.description) : undefined
+      // SDD's whole-branch review has no task: execution is over
+      if (role === 'review' && !taskN && s?.current === 'execute') await updateSp($, x => reach(x, 'review'))
       // next after the highest still listed: one left running keeps its number
       await update($, agents, all =>
         trimAgents({
@@ -228,16 +237,26 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const id = ++seq
+    let id = 0
     if (!e.agentId) {
-      const row = { id, at: await $.clock.now(), label: activityOf(e as Parameters<typeof activityOf>[0]), status: 'running' as const }
-      await update($, activity, all => [...(all ?? []), row].slice(-MAX_ACTIVITY))
+      const row = { at: await $.clock.now(), label: activityOf(e as Parameters<typeof activityOf>[0]), status: 'running' as const }
+      await update($, activity, all => {
+        const pushed = pushActivity(all ?? [], row)
+        id = pushed.id
+        return pushed.list
+      })
     }
-    const ran = await next(e)
-    if (!e.agentId) {
-      const status = ran.deny !== undefined || ran.isError ? ('error' as const) : ('ok' as const)
-      await update($, activity, all => (all ?? []).map(a => (a.id === id ? { ...a, status } : a)))
+    const settle = async (status: Activity['status']) => {
+      if (id) await update($, activity, all => (all ?? []).map(a => (a.id === id ? { ...a, status } : a)))
     }
+    let ran: Awaited<ReturnType<typeof next>>
+    try {
+      ran = await next(e)
+    } catch (err) {
+      await settle('error')
+      throw err
+    }
+    await settle(ran.deny !== undefined || ran.isError ? 'error' : 'ok')
     if (ran.deny !== undefined || ran.isError) return ran
 
     if (e.tool === 'TodoWrite') {
@@ -285,7 +304,7 @@ export const register: Register = on => {
       read($, main).then(x => ({ ...DEFAULT_MAIN, ...x })),
       read($, tasks).then(Object.values),
       read($, plan),
-      read($, agents).then(a => Object.values(a ?? {})),
+      read($, agents).then(a => Object.values(a ?? {}).map(withStatus)),
       read($, skills).then(s => s ?? []),
       read($, activity).then(a => a ?? []),
       read($, sp).then(x => ({ ...EMPTY_SP, ...x })),

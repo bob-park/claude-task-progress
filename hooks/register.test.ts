@@ -1,4 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { AgentRun } from '../types'
+import { pushActivity, withStatus } from './register'
 import { doneTime } from './view'
 
 const pane = {
@@ -447,4 +449,67 @@ test('activity shows alongside open tasks', async ($, on) => {
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^▸ aing$/ })).toBeDefined()
   expect(await ui.find({ text: /^✓ Bash · Push branch$/ })).toBeDefined()
+})
+
+test('an agent saved without a status (0.6) reads as running until it ends', () => {
+  const old = { n: 1, label: 'Old scan', model: '', startedAt: 0 } as unknown as AgentRun
+  expect(withStatus(old).status).toBe('running')
+  expect(withStatus({ ...old, endedAt: 5 }).status).toBe('done')
+  expect(withStatus({ ...old, status: 'failed', endedAt: 5 }).status).toBe('failed')
+})
+
+test('a new activity row takes the next id after the kept rows, never one in use', () => {
+  const kept = [{ id: 1, at: 0, label: 'Read · old.ts', status: 'error' as const }]
+  const { id, list } = pushActivity(kept, { at: 1, label: 'Bash · New', status: 'running' })
+  expect(id).toBe(2)
+  expect(list.map(a => a.id)).toEqual([1, 2])
+  // capped at the latest 10
+  const many = Array.from({ length: 10 }, (_, k) => ({ id: k + 1, at: 0, label: 'x', status: 'ok' as const }))
+  expect(pushActivity(many, { at: 1, label: 'y', status: 'running' }).list.map(a => a.id)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+})
+
+test('a tool call that throws settles its activity row as ✗', async ($, on) => {
+  mock.clock(on)
+  on('tool.call', () => {
+    throw new Error('boom')
+  })
+  await $.tool.call({ tool: 'Bash', command: 'x', description: 'Explodes' } as never).catch(() => undefined)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^✗ Bash · Explodes$/ })).toBeDefined()
+})
+
+test('a review without a task number in its description takes none from its prompt', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'D1' }))
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
+  await $.agent.spawn({ prompt: 'The plan says: ### Task 3: Parser', description: 'Review spec document' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] review Review spec / })).toBeDefined()
+  expect(await ui.find({ text: /review #3/ })).toBeUndefined()
+})
+
+test('after finish, a plain review agent lists under AGENTS again', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'A1' }))
+  await $.skill.prompt({ skill: 'superpowers:finishing-a-development-branch', text: '' })
+  await $.agent.spawn({ prompt: 'p', description: 'Review diff' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 1: Review diff / })).toBeDefined()
+})
+
+test("SDD's whole-branch reviewer reaches the review stage", async ($, on) => {
+  mock.clock(on)
+  let k = 0
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: `A${++k}` }))
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  await $.agent.spawn({ prompt: 'p', description: 'Review Task 1 (spec + quality)' } as never)
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]execute$/ })).toBeDefined() // a per-task review is still execute (spinning: agents run)
+  await ui.unmount()
+  await $.agent.spawn({ prompt: 'p', description: 'Review code changes' } as never)
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^✓execute [●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]review$/ })).toBeDefined()
 })

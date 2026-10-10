@@ -129,10 +129,11 @@ text is matched with `/\b(spike|bounded|architectural)\b/gi`; the last match set
 **SDD roles.** superpowers 6.4.1 dispatches `Implement Task N: …`, one combined
 `Review Task N (spec + quality)`, `Re-review Task N fix round R`, and document reviews
 (`Review spec document`, `Review plan document`, `Review code changes`). An
-`agent.spawn` while `sp.stages` is non-empty gets a role from its description alone
+`agent.spawn` while `sp.stages` is non-empty and `current` is not `finish` gets a role from its description alone
 (prompts quote the spec, so they would mislead): `/^implement\b/i` → impl, else
 `/review/i` → review, else none. `taskN` is the first `/\bTask\s+(\d+)/` in the
-description, else in the prompt. When a review agent's turn completes, its answer sets
+description only (prompts quote plan text). A review agent without a task number
+spawned while `current` is `execute` is SDD's whole-branch review: it reaches `review`. When a review agent's turn completes, its answer sets
 `verdict`: `/needs fixes|not addressed|❌/i` → issues, else `/approved|addressed|✅/i`
 → ok, else unset.
 
@@ -141,8 +142,10 @@ description, else in the prompt. When a review agent's turn completes, its answe
 or `aborted`, else `done`. A step after its end puts it back to `running` (existing logic).
 
 **Skills / activity.** Every `skill.prompt` is recorded with its plugin prefix stripped.
-Each main-loop `tool.call` pushes `running` before `next(e)` and becomes `error` (deny or
-`isError`) or `ok` after.
+Each main-loop `tool.call` pushes `running` before `next(e)` and becomes `error` (deny,
+`isError`, or `next(e)` throwing) or `ok` after. A row's id is one past the highest kept
+row's, so ids stay unique across a hot reload. An agent kept from 0.6 without `status`
+reads as `running` until it has an `endedAt`, then `done`.
 
 ## Rendering
 
