@@ -1,13 +1,29 @@
 import { atom, read, update } from 'claude-code'
 import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claude-code'
 
-import type { AgentRun, Main, Plan, Task } from '../types'
+import type { Activity, AgentRun, AgentStatus, Main, Plan, SkillUse, Task } from '../types'
 import { isPlanPath, keepCompleted, ledgerOwns, ledgerPath, parsePlan } from './plan'
-import { activityPanel, agentsPanel, FRAME_MS, mainPanel, SPINNER, tasksPanel } from './view'
+import { skillName } from './superpowers'
+import { activityPanel, agentsPanel, FRAME_MS, mainPanel, skillsPanel, SPINNER, tasksPanel } from './view'
 
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {} as Record<string, Task>)
 const plan = atom({ plugin: 'task-progress', key: 'plan' } as const, { path: '', tasks: [] } as Plan)
 const agents = atom({ plugin: 'task-progress', key: 'agents' } as const, {} as Record<string, AgentRun>)
+const skills = atom({ plugin: 'task-progress', key: 'skills' } as const, [] as SkillUse[])
+const activity = atom({ plugin: 'task-progress', key: 'activity' } as const, [] as Activity[])
+
+const MAX_AGENTS = 20
+const MAX_ACTIVITY = 10
+const MAX_SKILLS = 30
+const live = (r: AgentRun) => r.status === 'running' || r.status === 'waiting'
+// the oldest ended agents go first; running ones always stay
+const trimAgents = (all: Record<string, AgentRun>) => {
+  const ended = Object.entries(all).filter(([, r]) => !live(r)).sort(([, a], [, b]) => a.startedAt - b.startedAt)
+  const drop = new Set(ended.slice(0, Math.max(0, Object.keys(all).length - MAX_AGENTS)).map(([id]) => id))
+  return Object.fromEntries(Object.entries(all).filter(([id]) => !drop.has(id)))
+}
+// ties an activity row to its tool call across `next(e)`
+let seq = 0
 
 // a failed read keeps what the pane already shows
 const refreshPlan = async ($: EngineInterface, path: string) => {
@@ -31,7 +47,6 @@ const DEFAULT_MAIN: Main = {
   mode: '',
   steps: 0,
   isRunning: false,
-  activity: '',
   pct: null,
   tokens: null,
   window: 0,
@@ -62,7 +77,7 @@ let ticker: Timer | undefined
 // the clock runs while the main turn or any agent is working
 const animate = async ($: EngineInterface) => {
   const [m, a] = await Promise.all([read($, main), read($, agents)])
-  const on = !!m?.isRunning || Object.values(a ?? {}).some(r => r.endedAt === undefined)
+  const on = !!m?.isRunning || Object.values(a ?? {}).some(live)
   if (on) ticker ??= $.clock.every(FRAME_MS, () => $.ui.invalidate('ui.render'))
   else ticker = void ticker?.cancel()
 }
@@ -119,8 +134,6 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     await setMain($, () => ({ isRunning: true }))
-    // a new prompt clears agents that finished before it
-    await update($, agents, all => Object.fromEntries(Object.entries(all ?? {}).filter(([, r]) => r.endedAt === undefined)))
     await animate($)
     return next(e)
   })
@@ -130,14 +143,14 @@ export const register: Register = on => {
     if (e.agentId) {
       const { agentId } = e
       // an agent waiting on its own background work ends its turn but isn't done
-      const status = (await $.agent.list().catch(() => [])).find(a => a.id === agentId)?.status
-      if (status === 'waiting') return done
+      const waiting = (await $.agent.list().catch(() => [])).find(a => a.id === agentId)?.status === 'waiting'
       const at = await $.clock.now()
+      const status: AgentStatus = waiting ? 'waiting' : e.reason === 'error' || e.reason === 'aborted' ? 'failed' : 'done'
       await update($, agents, all => {
         const r = all?.[agentId]
-        return r ? { ...all, [agentId]: { ...r, endedAt: at } } : all
+        return r ? { ...all, [agentId]: { ...r, status, ...(waiting ? {} : { endedAt: at }) } } : all
       })
-    } else await setMain($, () => ({ isRunning: false, activity: '' }))
+    } else await setMain($, () => ({ isRunning: false }))
     await animate($)
     return done
   })
@@ -149,9 +162,9 @@ export const register: Register = on => {
       // a step after its end: the agent resumed once its background work came back
       const r = (await read($, agents))?.[agentId]
       if (r) {
-        const { endedAt, ...run } = r
-        await update($, agents, all => ({ ...all, [agentId]: { ...run, model: e.model } }))
-        if (endedAt !== undefined) await animate($)
+        const { endedAt: _, ...run } = r
+        await update($, agents, all => ({ ...all, [agentId]: { ...run, model: e.model, status: 'running' as const } }))
+        if (!live(r)) await animate($)
       }
     }
     return yield* next(e)
@@ -163,16 +176,22 @@ export const register: Register = on => {
     if (agentId) {
       const startedAt = await $.clock.now()
       // next after the highest still listed: one left running keeps its number
-      await update($, agents, all => ({
-        ...all,
-        [agentId]: { n: Math.max(0, ...Object.values(all ?? {}).map(r => r.n)) + 1, label: e.description || e.subagentType, model, startedAt },
-      }))
+      await update($, agents, all =>
+        trimAgents({
+          ...all,
+          [agentId]: { n: Math.max(0, ...Object.values(all ?? {}).map(r => r.n)) + 1, label: e.description || e.subagentType, model, startedAt, status: 'running' },
+        }),
+      )
       await animate($)
     }
     return spawned
   })
 
   on('skill.prompt', async ($, e, next) => {
+    const at = await $.clock.now()
+    const name = skillName(e.skill)
+    // the same skill twice in a row is one entry
+    await update($, skills, all => (all?.at(-1)?.name === name ? all : [...(all ?? []), { name, at }].slice(-MAX_SKILLS)))
     if (/(^|:)finishing-a-development-branch$/.test(e.skill)) await update($, plan, p => ({ ...(p ?? { path: '', tasks: [] }), finishing: true }))
     return next(e)
   })
@@ -189,8 +208,16 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    if (!e.agentId) await setMain($, () => ({ activity: activityOf(e as Parameters<typeof activityOf>[0]) }))
+    const id = ++seq
+    if (!e.agentId) {
+      const row = { id, at: await $.clock.now(), label: activityOf(e as Parameters<typeof activityOf>[0]), status: 'running' as const }
+      await update($, activity, all => [...(all ?? []), row].slice(-MAX_ACTIVITY))
+    }
     const ran = await next(e)
+    if (!e.agentId) {
+      const status = ran.deny !== undefined || ran.isError ? ('error' as const) : ('ok' as const)
+      await update($, activity, all => (all ?? []).map(a => (a.id === id ? { ...a, status } : a)))
+    }
     if (ran.deny !== undefined || ran.isError) return ran
 
     if (e.tool === 'TodoWrite') {
@@ -226,12 +253,13 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [m, todos, p, runs, now] = await Promise.all([
+    const [m, todos, p, runs, used, acts, now] = await Promise.all([
       read($, main).then(x => ({ ...DEFAULT_MAIN, ...x })),
       read($, tasks).then(Object.values),
       read($, plan),
-      // running ones only, the latest on top
-      read($, agents).then(a => Object.values(a ?? {}).filter(r => r.endedAt === undefined).sort((x, y) => y.startedAt - x.startedAt)),
+      read($, agents).then(a => Object.values(a ?? {})),
+      read($, skills).then(s => s ?? []),
+      read($, activity).then(a => a ?? []),
       $.clock.now(),
     ])
     const list = shownTasks(todos, p)
@@ -239,16 +267,14 @@ export const register: Register = on => {
     const { Box } = ui
     const f = frame()
     // a background agent keeps the session working after the main turn ends
-    const v = { W: Math.max(30, e.props.bodyColumns), f, spin: SPINNER[f % SPINNER.length]!, busy: m.isRunning || runs.length > 0, now }
-    const allDone = list.length > 0 && list.every(t => t.status === 'completed')
-    // what Claude is doing right now, when no task says it
-    const showActivity = m.isRunning && !!m.activity && (list.length === 0 || allDone)
+    const v = { W: Math.max(30, e.props.bodyColumns), f, spin: SPINNER[f % SPINNER.length]!, busy: m.isRunning || runs.some(live), now }
     return (
       <Box flexDirection="column">
         {mainPanel(ui, m, v)}
         {list.length > 0 ? tasksPanel(ui, list, m.doneAt, !!p?.finishing, v) : null}
-        {showActivity ? activityPanel(ui, m.activity, v) : null}
         {runs.length > 0 ? agentsPanel(ui, runs, v) : null}
+        {used.length > 0 ? skillsPanel(ui, used.map(u => u.name), v) : null}
+        {acts.length > 0 ? activityPanel(ui, acts, v) : null}
       </Box>
     )
   })

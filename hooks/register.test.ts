@@ -138,15 +138,45 @@ test('reading a plan written in an earlier session makes it the active plan', as
   expect(await ui.find({ text: /^ 1\/2$/ })).toBeDefined()
 })
 
-test('with no todos or plan, a running turn shows what Claude is doing', async ($, on) => {
+test('activity lists the latest main-loop tool calls, newest on top, ✗ on error', async ($, on) => {
   mock.clock(on)
-  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
-  on('tool.call', () => ({ result: {} }) as never)
+  on('tool.call', (_$, e) => (e.tool === 'Read' ? { result: {}, isError: true } : { result: {} }) as never)
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^ACTIVITY$/ })).toBeUndefined()
+  await ui.unmount()
 
-  await $.turn.start({ text: 'go', turnId: 'T1' })
   await $.tool.call({ tool: 'Bash', command: 'bun test', description: 'Run tests' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/r/a/missing.ts' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/r/a/plan.ts' } as never)
+  await $.tool.call({ tool: 'Grep', pattern: 'TODO' } as never)
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^ACTIVITY$/ })).toBeDefined()
+  const rows = await ui.findAll({ text: /^[✓✗⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \w+ · / })
+  expect(rows.map(r => r.text)).toEqual(['✓ Grep · TODO', '✓ Edit · plan.ts', '✗ Read · missing.ts']) // the latest 3
+  expect(await ui.find({ text: /^\d\d:\d\d $/ })).toBeDefined()
+})
+
+test('a tool call shows as running until it returns', async ($, on) => {
+  mock.clock(on)
+  let running = false
+  on('tool.call', async () => {
+    const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+    running = !!(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Bash · Run tests$/ }))
+    await ui.unmount()
+    return { result: {} } as never
+  })
+  await $.tool.call({ tool: 'Bash', command: 'bun test', description: 'Run tests' } as never)
+  expect(running).toBe(true)
+})
+
+test('skills list every skill run in order, a repeat in a row once', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  for (const skill of ['superpowers:brainstorming', 'superpowers:brainstorming', 'commit', 'superpowers:writing-plans'])
+    await $.skill.prompt({ skill, text: '' })
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Bash · Run tests$/ })).toBeDefined()
+  expect(await ui.find({ text: /^SKILLS$/ })).toBeDefined()
+  expect(await ui.find({ text: /^brainstorming → commit → writing-plans$/ })).toBeDefined()
 })
 
 test('agents list below the tasks: num, label, model and mm:ss', async ($, on) => {
@@ -166,6 +196,7 @@ test('agents list below the tasks: num, label, model and mm:ss', async ($, on) =
   // the latest on top
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^AGENTS$/ })).toBeDefined()
+  expect(await ui.find({ text: /^  2 running · 0 done$/ })).toBeDefined()
   const rows = await ui.findAll({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d: / })
   expect(rows.map(r => r.text)).toEqual([
     expect.stringMatching(/^. 2: Review diff -+ Haiku 5\.5 00:42$/),
@@ -173,16 +204,38 @@ test('agents list below the tasks: num, label, model and mm:ss', async ($, on) =
   ])
   await ui.unmount()
 
-  // a finished one leaves the list at once
+  // a finished one stays below the running ones with ✓ and its final time
   await end('A1')
+  await clock.advance(10_000)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /Explore auth/ })).toBeUndefined()
-  expect(await ui.find({ text: /2: Review diff/ })).toBeDefined()
+  expect((await ui.findAll({ text: /^. \d: / })).map(r => r.text)).toEqual([
+    expect.stringMatching(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 2: Review diff -+ Haiku 5\.5 00:52$/),
+    expect.stringMatching(/^✓ 1: Explore auth -+ Haiku 5\.5 01:23$/),
+  ])
   await ui.unmount()
 
-  await end('A2')
+  // a new prompt keeps them; a failed one is ✗ and counted
+  await $.turn.start({ text: 'next', turnId: 'T2' })
+  await $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'T', agentId: 'A2', reason: 'error' } as never)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^AGENTS$/ })).toBeUndefined()
+  expect(await ui.find({ text: /^  0 running · 1 done · 1 failed$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✗ 2: Review diff / })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 1: Explore auth / })).toBeDefined()
+})
+
+test('agents show the latest 3 ended ones, and keep at most 20', async ($, on) => {
+  const clock = mock.clock(on)
+  let k = 0
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: `A${++k}` }))
+  on('turn.complete', () => ({ text: '' }))
+  for (let i = 1; i <= 22; i++) {
+    await $.agent.spawn({ prompt: 'p', description: `Job ${i}` } as never)
+    await clock.advance(1000)
+    await $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'T', agentId: `A${i}`, reason: 'answer' } as never)
+  }
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^  0 running · 20 done$/ })).toBeDefined()
+  expect((await ui.findAll({ text: /^✓ \d+: / })).map(r => r.text.split(' -')[0])).toEqual(['✓ 22: Job 22', '✓ 21: Job 21', '✓ 20: Job 20'])
 })
 
 test('a TaskCreate task shows its number on the current line', async ($, on) => {
@@ -229,8 +282,9 @@ test('an agent waiting on its background work stays running, and a resumed one r
   await end('A1')
   await end('A2')
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] 1: Scan / })).toBeDefined()
-  expect(await ui.find({ text: /2: Lint/ })).toBeUndefined()
+  expect(await ui.find({ text: /^⏸ 1: Scan / })).toBeDefined()
+  expect(await ui.find({ text: /^✓ 2: Lint / })).toBeDefined()
+  expect(await ui.find({ text: /^  1 running · 1 done$/ })).toBeDefined() // waiting counts as running
   await ui.unmount()
 
   // A2 is woken again: its next step puts it back to running
@@ -255,17 +309,15 @@ test('finishing-a-development-branch shows under the tasks until another plan', 
 
   await $.tool.call({ tool: 'Write', file_path: B, content: '' } as never)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /finishing-a-development-branch/ })).toBeUndefined()
+  expect(await ui.find({ text: /^⎇ finishing-a-development-branch$/ })).toBeUndefined()
 })
 
-test('once every task is done, a running turn shows what Claude is doing', async ($, on) => {
+test('activity shows alongside open tasks', async ($, on) => {
   mock.clock(on)
-  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('tool.call', () => ({ result: {} }) as never)
-  await $.tool.call({ tool: 'TodoWrite', todos: [todo('a', 'completed')] } as never)
-  await $.turn.start({ text: 'go', turnId: 'T1' })
+  await $.tool.call({ tool: 'TodoWrite', todos: [todo('a', 'in_progress')] } as never)
   await $.tool.call({ tool: 'Bash', command: 'git push', description: 'Push branch' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓ 모두 완료 · / })).toBeDefined()
-  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Bash · Push branch$/ })).toBeDefined()
+  expect(await ui.find({ text: /^▸ aing$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ Bash · Push branch$/ })).toBeDefined()
 })

@@ -3,8 +3,16 @@ export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 /** `n`: the task's number when its source has one (plan `Task N`, TaskCreate id, `1.` step) */
 export type Task = { status: TaskStatus; label: string; n?: string }
 
-/** A subagent the model spawned, listed under the tasks */
-export type AgentRun = { n: number; label: string; model: string; startedAt: number; endedAt?: number }
+export type AgentStatus = 'running' | 'waiting' | 'done' | 'failed'
+
+/** A subagent the model spawned; kept once it ends (`endedAt`), up to the latest 20 */
+export type AgentRun = { n: number; label: string; model: string; startedAt: number; endedAt?: number; status: AgentStatus }
+
+/** A skill the session ran, in order */
+export type SkillUse = { name: string; at: number }
+
+/** A main-loop tool call: `Bash · Run tests` */
+export type Activity = { id: number; at: number; label: string; status: 'running' | 'ok' | 'error' }
 
 /** The plan file progress is read from when there are no todos; `finishing` once finishing-a-development-branch ran on it */
 export type Plan = { path: string; tasks: Task[]; finishing?: boolean }
@@ -16,8 +24,6 @@ export type Main = {
   mode: string
   steps: number
   isRunning: boolean
-  /** The main loop's latest tool call, shown when there are no tasks */
-  activity: string
   pct: number | null
   tokens: number | null
   window: number
@@ -38,6 +44,13 @@ export type Sp = { path?: SpPath; stages: Stage[]; current?: Stage; extras: stri
 
 declare module 'claude-code' {
   interface PluginState {
-    'task-progress': { tasks: Record<string, Task>; main: Main; plan: Plan; agents: Record<string, AgentRun> }
+    'task-progress': {
+      tasks: Record<string, Task>
+      main: Main
+      plan: Plan
+      agents: Record<string, AgentRun>
+      skills: SkillUse[]
+      activity: Activity[]
+    }
   }
 }

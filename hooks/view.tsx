@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { AgentRun, Main, Task } from '../types'
+import type { Activity, AgentRun, Main, Task } from '../types'
+import { fitTail } from './superpowers'
 
 /** `$.ui.resolve(e)`: the surface's Box, Text, ... */
 export type UI = ReturnType<EngineInterface['ui']['resolve']>
@@ -149,21 +150,63 @@ export const tasksPanel = (ui: UI, list: Task[], doneAt: number | null, finishin
   )
 }
 
-// ---- agents: `1: label --- Model mm:ss`, the right column lined up
-export const agentsPanel = ({ Box, Text }: UI, runs: AgentRun[], v: Frame) => (
-  <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={v.W}>
-    <Text color="magenta" bold>AGENTS</Text>
-    {runs.map(r => (
-      <Text key={String(r.n)} color="yellow" wrap="truncate">
-        {lineUp(v.spin, `${r.n}: ${r.label}`, ` ${prettyModel(r.model)} ${mmss(v.now - r.startedAt)}`, v.W, '-')}
+// ---- agents: running ones first, the latest on top, then the latest ended ones
+const ENDED_SHOWN = 3
+const ICON = { waiting: '⏸', done: '✓', failed: '✗' } as const
+const COLOR = { running: 'yellow', waiting: 'cyan', done: undefined, failed: 'red' } as const
+
+/** `⠹ 1: label --- Model mm:ss`; an ended row keeps its final time */
+export const agentRow = ({ Text }: UI, r: AgentRun, left: string, right: string, fill: string, v: Frame, icon?: string) => (
+  <Text key={String(r.n)} color={COLOR[r.status]} dimColor={r.status === 'done'} wrap="truncate">
+    {lineUp(icon ?? (r.status === 'running' ? v.spin : ICON[r.status]), left, right, v.W, fill)}
+  </Text>
+)
+
+export const agentsPanel = (ui: UI, all: AgentRun[], v: Frame) => {
+  const { Box, Text } = ui
+  const live = all.filter(r => r.status === 'running' || r.status === 'waiting').sort((x, y) => y.startedAt - x.startedAt)
+  const ended = all.filter(r => r.status === 'done' || r.status === 'failed').sort((x, y) => (y.endedAt ?? 0) - (x.endedAt ?? 0))
+  const failed = ended.filter(r => r.status === 'failed').length
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={v.W}>
+      <Text wrap="truncate">
+        <Text color="magenta" bold>AGENTS</Text>
+        <Text dimColor>{`  ${live.length} running · ${ended.length - failed} done${failed > 0 ? ` · ${failed} failed` : ''}`}</Text>
       </Text>
-    ))}
+      {[...live, ...ended.slice(0, ENDED_SHOWN)].map(r =>
+        agentRow(ui, r, `${r.n}: ${r.label}`, ` ${prettyModel(r.model)} ${mmss((r.endedAt ?? v.now) - r.startedAt)}`, '-', v),
+      )}
+    </Box>
+  )
+}
+
+// ---- skills: every skill run, oldest dropped first when too wide
+export const skillsPanel = ({ Box, Text }: UI, names: string[], v: Frame) => (
+  <Box flexDirection="column" borderStyle="round" borderColor="blue" paddingX={1} width={v.W}>
+    <Text color="blue" bold>SKILLS</Text>
+    <Text wrap="truncate">{fitTail(names, ' → ', v.W - 4, '…')}</Text>
   </Box>
 )
 
-// what Claude is doing right now, when no task says it
-export const activityPanel = ({ Box, Text }: UI, activity: string, v: Frame) => (
-  <Box borderStyle="round" borderColor="yellow" paddingX={1} width={v.W}>
-    <Text color="yellow" wrap="truncate">{`${v.spin} ${activity}`}</Text>
+// ---- activity: the main loop's latest tool calls, newest on top
+const ACTIVITY_SHOWN = 3
+const hhmm = (at: number) => {
+  const d = new Date(at)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+export const activityPanel = ({ Box, Text }: UI, items: Activity[], v: Frame) => (
+  <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={v.W}>
+    <Text color="yellow" bold>ACTIVITY</Text>
+    {items
+      .slice(-ACTIVITY_SHOWN)
+      .reverse()
+      .map(a => (
+        <Text key={String(a.id)} wrap="truncate">
+          <Text dimColor>{`${hhmm(a.at)} `}</Text>
+          <Text color={a.status === 'running' ? 'yellow' : a.status === 'error' ? 'red' : undefined}>
+            {`${a.status === 'running' ? v.spin : a.status === 'error' ? '✗' : '✓'} ${a.label}`}
+          </Text>
+        </Text>
+      ))}
   </Box>
 )
