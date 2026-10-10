@@ -33,9 +33,9 @@ Sections stack top to bottom; a section with nothing to show is hidden.
 │ ✓… ✓plan ●execute ○review ○finish            │
 │ ██████▓▓▓░░░░░░░░░░░░░░░░░ 3/8 · 37%         │
 │ ⠹ #4 Wire skill detector                     │
-│   impl ⠹ #4  Haiku 5.5               01:12   │
-│   spec ✓ #3  pass                    00:41   │
-│   code ✓ #3  approved                01:05   │
+│ ⠹ impl #4                   Haiku 5.5 01:12  │
+│ ✓ review #3                  approved 00:41  │
+│ ⚠ review #2                    issues 01:05  │
 │ + tdd  + verification                        │
 ╰──────────────────────────────────────────────╯
 ╭─ TASKS ──────────────────────────────────────╮
@@ -73,10 +73,10 @@ Atoms under plugin `task-progress`:
 
 - `main`, `tasks` (todos), `plan`: unchanged, except `plan.finishing` is dropped (now `sp.stages` holds `finish`).
 - `agents: Record<string, AgentRun>` — now a history. `AgentRun` gains
-  `status: 'running' | 'waiting' | 'done' | 'failed'`, `role?: 'impl' | 'spec' | 'code'`,
-  `taskN?: string`, `verdict?: 'ok' | 'issues'`. Kept across prompts; only the latest 20 are stored.
+  `status: 'running' | 'waiting' | 'done' | 'failed'`, `role?: 'impl' | 'review'`,
+  `taskN?: string`, `verdict?: 'ok' | 'issues'` (`role`, `taskN` and `verdict` from superpowers only). Kept across prompts; only the latest 20 are stored.
 - `skills: Array<{ name: string; at: number }>` (new) — every `skill.prompt`, in order;
-  a repeat of the last one is not added again.
+  a repeat of the last one is not added again; the latest 30 are kept.
 - `activity: Array<{ at: number; label: string; status: 'running' | 'ok' | 'error' }>` (new) —
   the last 10 main-loop tool calls.
 - `sp` (new): `{ path?: 'spike' | 'bounded' | 'architectural'; stages: Stage[]; current?: Stage; extras: string[]; doneAt: number | null }`,
@@ -101,36 +101,40 @@ No agent is listed in two sections.
 |---|---|
 | brainstorm | `brainstorming` |
 | spec | main-loop Write/Edit to `docs/superpowers/specs/*.md` |
-| plan | `writing-plans`, or a main-loop Write to a superpowers plan |
+| plan | `writing-plans`, or a main-loop Write/Edit/Read of a superpowers plan that is new (not the active plan) or before `plan` was reached |
 | worktree | `using-git-worktrees` (shown only once reached) |
 | execute | `subagent-driven-development`, `executing-plans`, `dispatching-parallel-agents` |
 | review | `requesting-code-review`, `receiving-code-review` |
 | finish | `finishing-a-development-branch` |
 
-Reaching a stage sets `current` and adds it to `stages` if absent. `test-driven-development`,
-`systematic-debugging` and `verification-before-completion` add to `extras` (shown as
-`+ tdd`, `+ debugging`, `+ verification`). A `brainstorming` after `finish` resets `sp`.
+Reaching a stage adds it to `stages` if absent and moves `current` forward only: a
+stage earlier than `current` (a late plan Read) leaves `current` alone. Once `finish`
+was reached, any earlier stage starts a new cycle from an empty `sp`.
+`test-driven-development`, `systematic-debugging` and `verification-before-completion`
+add to `extras` (shown as `+ tdd`, `+ debugging`, `+ verification`).
 
 **Pipeline shape.** Drawn stages depend on `path`:
 
 - architectural: brainstorm, spec, plan, [worktree], execute, review, finish
 - bounded: brainstorm, execute, finish
-- spike: brainstorm, probe (`probe` is current once any non-brainstorm work happens; it never completes)
-- unknown: only the stages in `stages`
+- spike, or no path yet: only the stages in `stages`
 
-A stage in `stages` before `current` is `✓`, `current` is `●` (the spinner while busy),
-the rest `○`. Too wide for the pane: the leading done stages collapse to `✓…`.
+A drawn stage before `current` is `✓` (a skipped one counts as passed), `current` is `●`
+(the spinner while busy), the rest `○`. Too wide for the pane: the leading done stages collapse to `✓…`.
 
 **Path badge.** While `current` is `brainstorm`, each main-loop `turn.complete` result
 text is matched with `/\b(spike|bounded|architectural)\b/gi`; the last match sets
 `path`. Reaching `spec` or `plan` sets `architectural` regardless.
 
-**SDD roles.** An `agent.spawn` while `current` is `execute` (or `review`) gets a role
-from its description and prompt: `/spec|compliance/i` → spec, `/code.?review|quality/i`
-→ code, `/implement/i` → impl (tested in that order); none → no role. `taskN` is the
-first `/Task\s+(\d+)/`. When a spec/code agent's turn completes, its result text sets
-`verdict`: `/approved|pass|✅/i` → ok, `/issues|changes requested|❌/i` → issues
-(checked in that order, nothing → unset).
+**SDD roles.** superpowers 6.4.1 dispatches `Implement Task N: …`, one combined
+`Review Task N (spec + quality)`, `Re-review Task N fix round R`, and document reviews
+(`Review spec document`, `Review plan document`, `Review code changes`). An
+`agent.spawn` while `sp.stages` is non-empty gets a role from its description alone
+(prompts quote the spec, so they would mislead): `/^implement\b/i` → impl, else
+`/review/i` → review, else none. `taskN` is the first `/\bTask\s+(\d+)/` in the
+description, else in the prompt. When a review agent's turn completes, its answer sets
+`verdict`: `/needs fixes|not addressed|❌/i` → issues, else `/approved|addressed|✅/i`
+→ ok, else unset.
 
 **Agent status.** `running` on spawn. `turn.complete` for the agent: `waiting` when
 `$.agent.list()` reports it waiting (existing logic), `failed` when `reason` is `error`
@@ -149,14 +153,18 @@ W is `bodyColumns`, as today.
   (uppercase); pipeline line; when a superpowers plan is active, the progress bar and
   current task line from today's TASKS code (sweep animation included), or
   `✓ 모두 완료 · <time>` from `sp.doneAt`; role agents, highest task number first, at most
-  4 lines, as `role icon #N  Model|verdict  mm:ss`; `extras` on one line.
+  4 lines, as `icon role #N … Model|approved|issues mm:ss` (a review that wants fixes
+  shows `⚠`; one without a task number shows its description); `extras` on one line.
 - **TASKS** (todos or a plan-mode plan): today's bar and current line; done time from `main.doneAt`.
 - **AGENTS** (any agent without a role): running and waiting ones first (latest on
   top; waiting shows `⏸` and counts as running), then the latest 3 ended ones with
   `✓` (done) or `✗` (failed). Header `N running · M done`, plus `· K failed` when K > 0. Rows keep today's `n: label --- Model mm:ss`
   format; an ended row shows its final duration.
 - **SKILLS**: `a → b → c` on one line; too wide drops the oldest behind `… →`.
-- **ACTIVITY**: the latest 3 as `HH:MM icon Tool · target` (spinner / `✓` / `✗`).
+- **ACTIVITY**: the latest 3 as `HH:MM icon Tool · target` (spinner / `✓` / `✗`), newest on top.
+
+Border colors: main cyan, SUPERPOWERS yellow, TASKS green, AGENTS magenta, SKILLS blue,
+ACTIVITY gray.
 
 The redraw ticker runs while the main turn or any agent is running (unchanged).
 
@@ -177,6 +185,8 @@ result unchanged, except the existing ExitPlanMode context line.
   - no SUPERPOWERS before a superpowers skill; present after `brainstorming`
   - a reply containing "bounded" shows the BOUNDED badge
   - an implementer spawned during SDD shows under SUPERPOWERS, not AGENTS
+  - an agent spawned before any superpowers skill gets no role
+  - a narrow pane folds the pipeline and the skills line
   - a plain agent that ends stays under AGENTS with `✓`
   - SKILLS and ACTIVITY show
   - existing tests whose behaviour changed (ended agents now stay; activity shows
