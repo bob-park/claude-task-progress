@@ -39,7 +39,10 @@ export const reach = (sp: Sp, stage: Stage, now: number): Sp => {
   const base = sp.stages.includes('finish') && at(stage) < at('finish') ? EMPTY_SP : withAt(sp)
   const stages = base.stages.includes(stage) ? base.stages : [...base.stages, stage]
   const current = at(base.current) > at(stage) ? base.current : stage
-  return { ...base, stages, ...(current ? { current } : {}), at: { [stage]: now, ...base.at } }
+  // 7.0.1: a spike skips the doc and the plan, so writing one means the spike was declined
+  const { path, ...rest } = base
+  const keep = path && !(path === 'spike' && (stage === 'spec' || stage === 'plan')) ? { path } : {}
+  return { ...rest, ...keep, stages, ...(current ? { current } : {}), at: { [stage]: now, ...base.at } }
 }
 
 /** How long each stage took: until the next one in order started, the latest until `now`. Finish never ends; a stage reached out of order has no sensible span */
@@ -59,9 +62,11 @@ export const addExtra = (sp: Sp, extra: string): Sp => (sp.extras.includes(extra
 // 7.0.1 sizes the work in plain words (a small change, a project) or names a spike; 6.4.1 named three paths
 const PATH_OF: Record<string, SpPath> = { spike: 'spike', 'small change': 'small', '작은 변경': 'small', 'a project': 'project', bounded: 'small', architectural: 'project' }
 
-/** The last size a reply names; a bare `프로젝트` is too common to count */
-export const pathFrom = (text: string) =>
-  PATH_OF[[...text.matchAll(/\b(spike|small change|a project|bounded|architectural)\b|(작은 변경)/gi)].at(-1)?.slice(1).find(Boolean)?.toLowerCase() ?? '']
+/** The size a reply names; a bare `프로젝트` is too common to count, and a reply naming small and project both says neither */
+export const pathFrom = (text: string): SpPath | undefined => {
+  const named = [...text.matchAll(/\b(spike|small change|a project(?![-\w])|bounded|architectural)\b|(작은 변경)/gi)].map(m => PATH_OF[m.slice(1).find(Boolean)!.toLowerCase()]!)
+  return named.includes('small') && named.includes('project') ? undefined : named.at(-1)
+}
 
 const SIZE: SpPath[] = ['spike', 'small', 'project']
 /** 7.0.1 steps a size up when the work grows, never down */

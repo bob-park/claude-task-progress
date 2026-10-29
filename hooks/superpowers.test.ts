@@ -57,6 +57,19 @@ test('7.0.1 sizing words, any case, inside Korean text', () => {
   expect(pathFrom('nothing here, unbounded')).toBeUndefined()
 })
 
+test('a project in ordinary English is not a size', () => {
+  expect(pathFrom("I'd call this a small change rather than a project.")).toBeUndefined() // names both: ambiguous
+  expect(pathFrom('This adds a project-wide setting')).toBeUndefined()
+  expect(pathFrom('In a project like this one, tests live in hooks/')).toBe('project') // still reads as a size
+})
+
+test('a spec or plan puts a spike on the plan workflow', () => {
+  let sp = reach({ ...EMPTY_SP, path: 'spike' }, 'brainstorm', 0)
+  sp = reach(sp, 'spec', 1)
+  expect(sp.path).toBeUndefined()
+  expect(pipeline(sp).map(s => s.stage)).toEqual(['brainstorm', 'spec', 'plan', 'execute', 'review', 'finish'])
+})
+
 test('size only steps up', () => {
   expect(sizeUp(undefined, 'spike')).toBe('spike')
   expect(sizeUp('spike', 'small')).toBe('small')
