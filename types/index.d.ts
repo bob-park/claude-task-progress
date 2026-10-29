@@ -53,7 +53,8 @@ export type SpPath = 'spike' | 'small' | 'project'
 export type Role = 'impl' | 'review'
 
 /** The superpowers workflow so far; empty `stages` until a superpowers skill runs */
-export type Sp = { path?: SpPath; stages: Stage[]; current?: Stage; extras: string[]; doneAt: number | null }
+/** `at`: when each stage of this cycle was first reached */
+export type Sp = { path?: SpPath; stages: Stage[]; current?: Stage; extras: string[]; doneAt: number | null; at: Partial<Record<Stage, number>> }
 
 declare module 'claude-code' {
   interface PluginState {

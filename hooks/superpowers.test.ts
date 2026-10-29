@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Sp } from '../types'
-import { addExtra, EMPTY_SP, extraOf, fitTail, pathFrom, pipeline, reach, roleOf, sizeUp, skillName, stageOf, taskNOf, verdictOf } from './superpowers'
+import { addExtra, EMPTY_SP, extraOf, fitTail, pathFrom, pipeline, reach, roleOf, sizeUp, skillName, stageOf, stageTimes, taskNOf, verdictOf, withAt } from './superpowers'
 
 test('skill names map to stages and extras, prefixed or bare', () => {
   expect(skillName('superpowers:brainstorming')).toBe('brainstorming')
@@ -15,15 +15,32 @@ test('skill names map to stages and extras, prefixed or bare', () => {
 })
 
 test('reach moves forward only, and starts over after finish', () => {
-  let sp = reach(EMPTY_SP, 'brainstorm')
-  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null })
-  sp = reach(sp, 'execute')
-  sp = reach(sp, 'plan') // a late plan read
+  let sp = reach(EMPTY_SP, 'brainstorm', 1)
+  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null, at: { brainstorm: 1 } })
+  sp = reach(sp, 'execute', 2)
+  sp = reach(sp, 'plan', 3) // a late plan read
   expect(sp.current).toBe('execute')
-  sp = reach(addExtra(sp, 'tdd'), 'finish')
+  sp = reach(addExtra(sp, 'tdd'), 'finish', 4)
   expect(sp.current).toBe('finish')
-  sp = reach(sp, 'brainstorm')
-  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null })
+  sp = reach(sp, 'brainstorm', 5)
+  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null, at: { brainstorm: 5 } })
+})
+
+test('stageTimes: each stage until the next one starts, current until now', () => {
+  let sp = reach(EMPTY_SP, 'brainstorm', 0)
+  sp = reach(sp, 'spec', 60_000)
+  sp = reach(sp, 'plan', 90_000)
+  sp = reach(sp, 'execute', 150_000)
+  sp = reach(sp, 'worktree', 155_000) // SDD setup, out of order
+  expect(stageTimes(sp, 300_000)).toEqual({ brainstorm: 60_000, spec: 30_000, plan: 60_000, execute: 150_000 })
+  expect(stageTimes(reach(sp, 'finish', 400_000), 900_000).finish).toBeUndefined()
+  expect(reach(reach(sp, 'finish', 400_000), 'brainstorm', 500_000).at).toEqual({ brainstorm: 500_000 })
+  expect(reach(sp, 'spec', 999_999).at.spec).toBe(60_000) // first reach wins
+})
+
+test('sp saved without at reads as no times', () => {
+  const old = { stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null } as unknown as Sp
+  expect(stageTimes(withAt(old), 10)).toEqual({})
 })
 
 test('addExtra keeps each extra once', () => {

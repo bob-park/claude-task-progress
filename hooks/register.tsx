@@ -3,7 +3,7 @@ import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claud
 
 import type { Activity, AgentRun, AgentStatus, Main, Plan, SkillUse, Sp, Task } from '../types'
 import { isPlanPath, keepCompleted, ledgerOwns, ledgerPath, parsePlan } from './plan'
-import { addExtra, EMPTY_SP, extraOf, isSpecPath, pathFrom, reach, roleOf, sizeUp, skillName, stageOf, taskNOf, verdictOf } from './superpowers'
+import { addExtra, EMPTY_SP, extraOf, isSpecPath, pathFrom, reach, roleOf, sizeUp, skillName, stageOf, taskNOf, verdictOf, withAt } from './superpowers'
 import { activityPanel, agentsPanel, FRAME_MS, mainPanel, skillsPanel, spPanel, SPINNER, tasksPanel } from './view'
 
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {} as Record<string, Task>)
@@ -12,7 +12,7 @@ const agents = atom({ plugin: 'task-progress', key: 'agents' } as const, {} as R
 const skills = atom({ plugin: 'task-progress', key: 'skills' } as const, [] as SkillUse[])
 const activity = atom({ plugin: 'task-progress', key: 'activity' } as const, [] as Activity[])
 const sp = atom({ plugin: 'task-progress', key: 'sp' } as const, EMPTY_SP)
-const updateSp = ($: EngineInterface, patch: (s: Sp) => Sp) => update($, sp, s => patch({ ...EMPTY_SP, ...s }))
+const updateSp = ($: EngineInterface, patch: (s: Sp) => Sp) => update($, sp, s => patch(withAt({ ...EMPTY_SP, ...s })))
 
 const MAX_AGENTS = 20
 const MAX_ACTIVITY = 10
@@ -204,7 +204,8 @@ export const register: Register = on => {
       // the description alone: prompts quote plan text, Task numbers included
       const taskN = role ? taskNOf(e.description) : undefined
       // SDD's whole-branch review has no task: execution is over
-      if (role === 'review' && !taskN && s?.current === 'execute' && reviewReady(await read($, plan))) await updateSp($, x => reach(x, 'review'))
+      if (role === 'review' && !taskN && s?.current === 'execute' && reviewReady(await read($, plan)))
+        await updateSp($, x => reach(x, 'review', startedAt))
       // next after the highest still listed: one left running keeps its number
       await update($, agents, all =>
         trimAgents({
@@ -226,7 +227,7 @@ export const register: Register = on => {
     const extra = extraOf(e.skill)
     // a skill a subagent loads (`tool.call` knows the agent, this event doesn't) never moves the stage
     const moves = stage && subagentSkills === 0 && (stage !== 'review' || reviewReady(await read($, plan)))
-    if (moves) await updateSp($, s => reach(s, stage))
+    if (moves) await updateSp($, s => reach(s, stage, at))
     else if (extra) await updateSp($, s => addExtra(s, extra))
     return next(e)
   })
@@ -295,14 +296,15 @@ export const register: Register = on => {
     // Read too: a plan written in an earlier session is executed by reading it
     const written = (e.tool === 'Write' || e.tool === 'Edit' || e.tool === 'Read') && isPlanPath(e.file_path) ? e.file_path : undefined
     const prev = await read($, plan)
+    const now = await $.clock.now()
     const path = planned ?? written ?? prev?.path
     if (path) await refreshPlan($, path)
-    if ((e.tool === 'Write' || e.tool === 'Edit') && isSpecPath(e.file_path)) await updateSp($, s => reach(s, 'spec'))
+    if ((e.tool === 'Write' || e.tool === 'Edit') && isSpecPath(e.file_path)) await updateSp($, s => reach(s, 'spec', now))
     // a superpowers plan reaches the plan stage; one already reached is only re-read
     const base = (p: string) => p.slice(p.lastIndexOf('/') + 1)
     if (written && ledgerPath(written)) {
       const fresh = !prev?.path || base(prev.path) !== base(written)
-      await updateSp($, s => (fresh || !s.stages.includes('plan') ? reach(s, 'plan') : s))
+      await updateSp($, s => (fresh || !s.stages.includes('plan') ? reach(s, 'plan', now) : s))
     }
     await stampDone($)
     if (!planned) return ran
@@ -317,7 +319,7 @@ export const register: Register = on => {
       read($, agents).then(a => Object.values(a ?? {}).map(withStatus)),
       read($, skills).then(s => s ?? []),
       read($, activity).then(a => a ?? []),
-      read($, sp).then(x => ({ ...EMPTY_SP, ...x })),
+      read($, sp).then(x => withAt({ ...EMPTY_SP, ...x })),
       $.clock.now(),
     ])
     const list = shownTasks(todos, p)

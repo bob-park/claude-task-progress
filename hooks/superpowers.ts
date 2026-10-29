@@ -23,20 +23,35 @@ const EXTRA_OF: Record<string, string> = {
 
 export const isSpecPath = (p: string) => /\/docs\/superpowers\/specs\/[^/]+\.md$/.test(p)
 
-export const EMPTY_SP: Sp = { stages: [], extras: [], doneAt: null }
+export const EMPTY_SP: Sp = { stages: [], extras: [], doneAt: null, at: {} }
+
+/** Saved before stage times (0.7) */
+export const withAt = (sp: Sp): Sp => (sp.at ? sp : { ...sp, at: {} })
 
 /** `superpowers:brainstorming` → `brainstorming` */
 export const skillName = (skill: string) => skill.slice(skill.lastIndexOf(':') + 1)
 export const stageOf = (skill: string): Stage | undefined => STAGE_OF[skillName(skill)]
 export const extraOf = (skill: string): string | undefined => EXTRA_OF[skillName(skill)]
 
-/** A stage before the current one never moves it back; after finish it starts a new cycle */
-export const reach = (sp: Sp, stage: Stage): Sp => {
+/** A stage before the current one never moves it back; after finish it starts a new cycle. `now` stamps a first reach */
+export const reach = (sp: Sp, stage: Stage, now: number): Sp => {
   const at = (s: Stage | undefined) => (s ? ORDER.indexOf(s) : -1)
-  const base = sp.stages.includes('finish') && at(stage) < at('finish') ? EMPTY_SP : sp
+  const base = sp.stages.includes('finish') && at(stage) < at('finish') ? EMPTY_SP : withAt(sp)
   const stages = base.stages.includes(stage) ? base.stages : [...base.stages, stage]
   const current = at(base.current) > at(stage) ? base.current : stage
-  return { ...base, stages, ...(current ? { current } : {}) }
+  return { ...base, stages, ...(current ? { current } : {}), at: { [stage]: now, ...base.at } }
+}
+
+/** How long each stage took: until the next one in order started, the latest until `now`. Finish never ends; a stage reached out of order has no sensible span */
+export const stageTimes = (sp: Sp, now: number) => {
+  const times: Partial<Record<Stage, number>> = {}
+  for (const stage of sp.stages) {
+    const start = sp.at[stage]
+    const later = ORDER.slice(ORDER.indexOf(stage) + 1).flatMap(s => sp.at[s] ?? [])
+    if (stage === 'finish' || start === undefined || later.some(t => t < start)) continue
+    times[stage] = (later.length ? Math.min(...later) : now) - start
+  }
+  return times
 }
 
 export const addExtra = (sp: Sp, extra: string): Sp => (sp.extras.includes(extra) ? sp : { ...sp, extras: [...sp.extras, extra] })
