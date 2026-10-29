@@ -358,16 +358,28 @@ test('superpowers section: hidden until a superpowers skill, then pipeline and p
   expect(await ui.find({ text: /^✓brainstorm ●execute$/ })).toBeDefined()
 })
 
-test('a spec makes it a project', async ($, on) => {
+test('a spec without a size draws the full line, no badge', async ($, on) => {
   mock.clock(on)
   on('skill.prompt', () => ({ text: '' }))
   on('tool.call', () => ({ result: {} }) as never)
   await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
   await $.tool.call({ tool: 'Write', file_path: '/r/docs/superpowers/specs/2026-01-01-x-design.md', content: '' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^PROJECT$/ })).toBeDefined()
-  // too wide for the pane: the done stages fold into ✓…
-  expect(await ui.find({ text: /^✓… ●spec ○plan ○execute ○review ○finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^(SMALL|PROJECT|SPIKE)$/ })).toBeUndefined()
+  expect(await ui.find({ text: /○finish$/ })).toBeDefined()
+})
+
+test('a small change stays small through its spec', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('turn.complete', () => ({ text: '' }))
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
+  await $.turn.complete(sdd('작은 변경이라 짧은 design doc을 쓸게요'))
+  await $.tool.call({ tool: 'Write', file_path: '/r/docs/superpowers/specs/2026-01-01-x-design.md', content: '' } as never)
+  await $.turn.complete(sdd('a spike could help here'))
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^SMALL$/ })).toBeDefined()
 })
 
 test('SDD agents show by role under superpowers, not under agents', async ($, on) => {

@@ -36,33 +36,34 @@ export const reach = (sp: Sp, stage: Stage): Sp => {
   const base = sp.stages.includes('finish') && at(stage) < at('finish') ? EMPTY_SP : sp
   const stages = base.stages.includes(stage) ? base.stages : [...base.stages, stage]
   const current = at(base.current) > at(stage) ? base.current : stage
-  // a spec or plan is only written for a project
-  const path = stage === 'spec' || stage === 'plan' ? 'project' : base.path
-  return { ...base, stages, ...(current ? { current } : {}), ...(path ? { path } : {}) }
+  return { ...base, stages, ...(current ? { current } : {}) }
 }
 
 export const addExtra = (sp: Sp, extra: string): Sp => (sp.extras.includes(extra) ? sp : { ...sp, extras: [...sp.extras, extra] })
 
-// 7.0.0 sizes the work in plain words and names only a spike; 6.4.1 named three paths
-const PATH_OF: Record<string, SpPath> = { spike: 'spike', bounded: 'small', architectural: 'project' }
+// 7.0.1 sizes the work in plain words (a small change, a project) or names a spike; 6.4.1 named three paths
+const PATH_OF: Record<string, SpPath> = { spike: 'spike', 'small change': 'small', '작은 변경': 'small', 'a project': 'project', bounded: 'small', architectural: 'project' }
 
-/** The last spike (or 6.4.1 path) a reply names */
-export const pathFrom = (text: string) => PATH_OF[[...text.matchAll(/\b(spike|bounded|architectural)\b/gi)].at(-1)?.[1]?.toLowerCase() ?? '']
+/** The last size a reply names; a bare `프로젝트` is too common to count */
+export const pathFrom = (text: string) =>
+  PATH_OF[[...text.matchAll(/\b(spike|small change|a project|bounded|architectural)\b|(작은 변경)/gi)].at(-1)?.slice(1).find(Boolean)?.toLowerCase() ?? '']
 
-// a small change or a spike goes through the normal workflow: only reached stages draw
-const TEMPLATE: Record<SpPath, Stage[]> = {
-  project: ['brainstorm', 'spec', 'plan', 'execute', 'review', 'finish'],
-  small: [],
-  spike: [],
-}
+const SIZE: SpPath[] = ['spike', 'small', 'project']
+/** 7.0.1 steps a size up when the work grows, never down */
+export const sizeUp = (cur: SpPath | undefined, next: SpPath) => (cur && SIZE.indexOf(cur) > SIZE.indexOf(next) ? cur : next)
+
+// a small change and a project both go through the plan workflow; a spike draws only reached stages
+const FULL: Stage[] = ['brainstorm', 'spec', 'plan', 'execute', 'review', 'finish']
+// an unsized cycle that wrote a spec or a plan is on the plan workflow too
+const template = (sp: Sp) => ((sp.path ? sp.path !== 'spike' : sp.stages.some(s => s === 'spec' || s === 'plan')) ? FULL : [])
 
 export type Step = { stage: Stage; state: 'done' | 'current' | 'todo' }
 
 /** The path's stages plus every stage reached, in order; before the current one counts as done */
 export const pipeline = (sp: Sp): Step[] => {
-  const template = sp.path ? TEMPLATE[sp.path] : []
+  const full = template(sp)
   const at = sp.current ? ORDER.indexOf(sp.current) : -1
-  return ORDER.filter(s => sp.stages.includes(s) || template.includes(s)).map(stage => {
+  return ORDER.filter(s => sp.stages.includes(s) || full.includes(s)).map(stage => {
     const i = ORDER.indexOf(stage)
     return { stage, state: i < at ? 'done' : i === at ? 'current' : 'todo' }
   })

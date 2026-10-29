@@ -3,7 +3,7 @@ import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claud
 
 import type { Activity, AgentRun, AgentStatus, Main, Plan, SkillUse, Sp, Task } from '../types'
 import { isPlanPath, keepCompleted, ledgerOwns, ledgerPath, parsePlan } from './plan'
-import { addExtra, EMPTY_SP, extraOf, isSpecPath, pathFrom, reach, roleOf, skillName, stageOf, taskNOf, verdictOf } from './superpowers'
+import { addExtra, EMPTY_SP, extraOf, isSpecPath, pathFrom, reach, roleOf, sizeUp, skillName, stageOf, taskNOf, verdictOf } from './superpowers'
 import { activityPanel, agentsPanel, FRAME_MS, mainPanel, skillsPanel, spPanel, SPINNER, tasksPanel } from './view'
 
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {} as Record<string, Task>)
@@ -168,7 +168,7 @@ export const register: Register = on => {
       await setMain($, () => ({ isRunning: false }))
       // brainstorming says out loud which path it takes
       const path = pathFrom(e.answer)
-      if (path) await updateSp($, s => (s.current === 'brainstorm' ? { ...s, path } : s))
+      if (path) await updateSp($, s => (s.current === 'brainstorm' ? { ...s, path: sizeUp(s.path, path) } : s))
     }
     await animate($)
     return done
