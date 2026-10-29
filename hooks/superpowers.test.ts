@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import { addExtra, EMPTY_SP, extraOf, fitTail, pathFrom, pipeline, reach, roleOf, skillName, stageOf, taskNOf, verdictOf } from './superpowers'
+import type { Sp } from '../types'
+import { addExtra, EMPTY_SP, extraOf, fitTail, pathFrom, pipeline, reach, roleOf, sizeUp, skillName, stageOf, stageTimes, taskNOf, verdictOf, withAt } from './superpowers'
 
 test('skill names map to stages and extras, prefixed or bare', () => {
   expect(skillName('superpowers:brainstorming')).toBe('brainstorming')
@@ -14,49 +15,79 @@ test('skill names map to stages and extras, prefixed or bare', () => {
 })
 
 test('reach moves forward only, and starts over after finish', () => {
-  let sp = reach(EMPTY_SP, 'brainstorm')
-  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null })
-  sp = reach(sp, 'execute')
-  sp = reach(sp, 'plan') // a late plan read
+  let sp = reach(EMPTY_SP, 'brainstorm', 1)
+  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null, at: { brainstorm: 1 } })
+  sp = reach(sp, 'execute', 2)
+  sp = reach(sp, 'plan', 3) // a late plan read
   expect(sp.current).toBe('execute')
-  expect(sp.path).toBe('project')
-  sp = reach(addExtra(sp, 'tdd'), 'finish')
+  sp = reach(addExtra(sp, 'tdd'), 'finish', 4)
   expect(sp.current).toBe('finish')
-  sp = reach(sp, 'brainstorm')
-  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null })
+  sp = reach(sp, 'brainstorm', 5)
+  expect(sp).toEqual({ stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null, at: { brainstorm: 5 } })
+})
+
+test('stageTimes: each stage until the next one starts, current until now', () => {
+  let sp = reach(EMPTY_SP, 'brainstorm', 0)
+  sp = reach(sp, 'spec', 60_000)
+  sp = reach(sp, 'plan', 90_000)
+  sp = reach(sp, 'execute', 150_000)
+  sp = reach(sp, 'worktree', 155_000) // SDD setup, out of order
+  expect(stageTimes(sp, 300_000)).toEqual({ brainstorm: 60_000, spec: 30_000, plan: 60_000, execute: 150_000 })
+  expect(stageTimes(reach(sp, 'finish', 400_000), 900_000).finish).toBeUndefined()
+  expect(reach(reach(sp, 'finish', 400_000), 'brainstorm', 500_000).at).toEqual({ brainstorm: 500_000 })
+  expect(reach(sp, 'spec', 999_999).at.spec).toBe(60_000) // first reach wins
+})
+
+test('sp saved without at reads as no times', () => {
+  const old = { stages: ['brainstorm'], current: 'brainstorm', extras: [], doneAt: null } as unknown as Sp
+  expect(stageTimes(withAt(old), 10)).toEqual({})
 })
 
 test('addExtra keeps each extra once', () => {
   expect(addExtra(addExtra(EMPTY_SP, 'tdd'), 'tdd').extras).toEqual(['tdd'])
 })
 
-test('path is the last one a reply names, any case, inside Korean text', () => {
-  // 7.0.0 sizes the work in plain words; only a spike is named
-  expect(pathFrom('A quick throwaway spike would tell us faster.')).toBe('spike')
+test('7.0.1 sizing words, any case, inside Korean text', () => {
+  expect(pathFrom('This is a small change, so I will describe it here.')).toBe('small')
+  expect(pathFrom('규모는 작은 변경으로 보고 짧은 문서를 쓰겠습니다')).toBe('small')
+  expect(pathFrom('This is a project, so a full design doc.')).toBe('project')
+  expect(pathFrom('규모는 "프로젝트"로 보고 전체 문서를 쓰겠습니다')).toBeUndefined()
   expect(pathFrom('이건 spike 로 먼저 확인해 볼게요')).toBe('spike')
-  expect(pathFrom('This is a small change, so I will describe it here.')).toBeUndefined()
-  // 6.4.1 named its three paths: they map onto the same badges
-  expect(pathFrom('this looks bounded, so I will present a short design')).toBe('small')
   expect(pathFrom('**분류: Architectural** — spec 경로로 가겠습니다')).toBe('project')
-  expect(pathFrom('Spike인 줄 알았는데 BOUNDED로 올립니다')).toBe('small')
   expect(pathFrom('nothing here, unbounded')).toBeUndefined()
 })
 
-test('pipeline draws the path template plus reached stages', () => {
-  expect(pipeline({ ...EMPTY_SP, path: 'project', stages: ['brainstorm', 'plan', 'execute'], current: 'execute' }).map(s => `${s.state}:${s.stage}`)).toEqual([
-    'done:brainstorm',
-    'done:spec',
-    'done:plan',
-    'current:execute',
-    'todo:review',
-    'todo:finish',
-  ])
-  // a small change or a spike skips the plan workflow: only what was reached
-  expect(pipeline({ ...EMPTY_SP, path: 'small', stages: ['brainstorm'], current: 'brainstorm' }).map(s => s.stage)).toEqual(['brainstorm'])
-  expect(pipeline({ ...EMPTY_SP, path: 'spike', stages: ['brainstorm'], current: 'brainstorm' }).map(s => s.stage)).toEqual(['brainstorm'])
-  expect(pipeline({ ...EMPTY_SP, stages: ['brainstorm'], current: 'brainstorm' }).map(s => s.stage)).toEqual(['brainstorm'])
-  // worktree shows once reached
-  expect(pipeline({ ...EMPTY_SP, path: 'project', stages: ['worktree'], current: 'worktree' }).map(s => s.stage)).toContain('worktree')
+test('a project in ordinary English is not a size', () => {
+  expect(pathFrom("I'd call this a small change rather than a project.")).toBeUndefined() // names both: ambiguous
+  expect(pathFrom('This adds a project-wide setting')).toBeUndefined()
+  expect(pathFrom('In a project like this one, tests live in hooks/')).toBe('project') // still reads as a size
+})
+
+test('a spec or plan puts a spike on the plan workflow', () => {
+  let sp = reach({ ...EMPTY_SP, path: 'spike' }, 'brainstorm', 0)
+  sp = reach(sp, 'spec', 1)
+  expect(sp.path).toBeUndefined()
+  expect(pipeline(sp).map(s => s.stage)).toEqual(['brainstorm', 'spec', 'plan', 'execute', 'review', 'finish'])
+})
+
+test('size only steps up', () => {
+  expect(sizeUp(undefined, 'spike')).toBe('spike')
+  expect(sizeUp('spike', 'small')).toBe('small')
+  expect(sizeUp('small', 'project')).toBe('project')
+  expect(sizeUp('project', 'spike')).toBe('project')
+  expect(sizeUp('small', 'spike')).toBe('small')
+})
+
+test('pipeline: small and project draw the whole line, spike only what it reached', () => {
+  const line = (sp: Partial<Sp>) => pipeline({ ...EMPTY_SP, ...sp }).map(s => `${s.state}:${s.stage}`)
+  const full = ['done:brainstorm', 'done:spec', 'done:plan', 'current:execute', 'todo:review', 'todo:finish']
+  expect(line({ path: 'small', stages: ['brainstorm', 'plan', 'execute'], current: 'execute' })).toEqual(full)
+  expect(line({ path: 'project', stages: ['brainstorm', 'plan', 'execute'], current: 'execute' })).toEqual(full)
+  expect(line({ stages: ['brainstorm', 'spec'], current: 'spec' })).toHaveLength(6) // unsized, spec written
+  expect(line({ stages: ['plan'], current: 'plan' })).toHaveLength(6) // started at writing-plans
+  expect(line({ stages: ['brainstorm'], current: 'brainstorm' })).toEqual(['current:brainstorm'])
+  expect(line({ path: 'spike', stages: ['brainstorm'], current: 'brainstorm' })).toEqual(['current:brainstorm'])
+  expect(line({ path: 'project', stages: ['worktree'], current: 'worktree' }).map(s => s.slice(s.indexOf(':') + 1))).toContain('worktree')
 })
 
 test('SDD dispatches get a role and task number; reports a verdict', () => {
@@ -66,6 +97,9 @@ test('SDD dispatches get a role and task number; reports a verdict', () => {
   expect(roleOf('Review spec document')).toBe('review')
   expect(roleOf('Builder check on the design doc')).toBe('review') // 7.0.0 brainstorming
   expect(roleOf('Explore auth')).toBeUndefined()
+  expect(roleOf('Fix Task 3: address review findings')).toBe('impl')
+  expect(roleOf('Fix final review findings')).toBe('impl')
+  expect(taskNOf('review task 3 (spec + quality)')).toBe('3')
   expect(taskNOf('Review Task 12 (spec + quality)')).toBe('12')
   expect(taskNOf('Explore auth')).toBeUndefined()
   expect(verdictOf('**Task quality:** Approved')).toBe('ok')
