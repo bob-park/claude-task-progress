@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { AgentRun } from '../types'
 import { pushActivity, withStatus } from './register'
-import { doneTime } from './view'
+import { doneTime, dur } from './view'
 
 const pane = {
   plugin: 'task-progress',
@@ -317,12 +317,14 @@ test('finish shows on the pipeline until another plan starts a new cycle', async
   await $.skill.prompt({ skill: 'superpowers:finishing-a-development-branch', text: '' })
   await $.tool.call({ tool: 'Read', file_path: SP } as never) // the same plan again: still finishing
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /●finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^● finish$/ })).toBeDefined() // finish never shows a time
   await ui.unmount()
 
   await $.tool.call({ tool: 'Write', file_path: B, content: '' } as never)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /●plan ○execute ○review ○finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^● plan +\d\d:\d\d$/ })).toBeDefined()
+  expect(await ui.find({ text: /^○ finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ brainstorm$/ })).toBeDefined() // a new cycle: the earlier stages it skipped carry no time
 })
 
 const sdd = (answer = '') => ({ answer, durationMs: 0, isAborted: false, turnId: 'T', reason: 'answer' }) as never
@@ -339,14 +341,14 @@ test('superpowers section: hidden until a superpowers skill, then pipeline and p
   await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^⚡ SUPERPOWERS$/ })).toBeDefined()
-  expect(await ui.find({ text: /^●brainstorm$/ })).toBeDefined()
+  expect(await ui.find({ text: /^● brainstorm +\d\d:\d\d$/ })).toBeDefined()
   await ui.unmount()
 
   await $.turn.complete(sdd('A quick spike would show whether this works. Want me to try one?'))
   await $.skill.prompt({ skill: 'superpowers:test-driven-development', text: '' })
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^SPIKE$/ })).toBeDefined()
-  expect(await ui.find({ text: /^●brainstorm$/ })).toBeDefined()
+  expect(await ui.find({ text: /^● brainstorm +\d\d:\d\d$/ })).toBeDefined()
   expect(await ui.find({ text: /^\+ tdd$/ })).toBeDefined()
   await ui.unmount()
 
@@ -355,7 +357,9 @@ test('superpowers section: hidden until a superpowers skill, then pipeline and p
   await $.turn.complete(sdd('this looks bounded after all'))
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^SPIKE$/ })).toBeDefined()
-  expect(await ui.find({ text: /^✓brainstorm ●execute$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ brainstorm +\d\d:\d\d$/ })).toBeDefined()
+  expect(await ui.find({ text: /^● execute +\d\d:\d\d$/ })).toBeDefined()
+  expect(await ui.find({ text: /^○ spec/ })).toBeUndefined() // a spike draws only what it reached
 })
 
 test('a spec without a size draws the full line, no badge', async ($, on) => {
@@ -366,7 +370,7 @@ test('a spec without a size draws the full line, no badge', async ($, on) => {
   await $.tool.call({ tool: 'Write', file_path: '/r/docs/superpowers/specs/2026-01-01-x-design.md', content: '' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^(SMALL|PROJECT|SPIKE)$/ })).toBeUndefined()
-  expect(await ui.find({ text: /○finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^○ finish$/ })).toBeDefined()
 })
 
 test('a small change stays small through its spec', async ($, on) => {
@@ -410,9 +414,9 @@ test('review waits for the plan to be done', async ($, on) => {
   on('agent.spawn', (_$, e) => ({ model: 'claude-haiku-5-5', agentId: e.description }))
   const current = async () => {
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-    const found = await ui.find({ text: /[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/ })
+    const found = await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (execute|review)\b/ })
     await ui.unmount()
-    return found?.text.match(/[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/)?.[1]
+    return found?.text.match(/^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (execute|review)\b/)?.[1]
   }
   await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
   await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
@@ -436,9 +440,9 @@ test('a skill a subagent loads never moves the stage', async ($, on) => {
   })
   const current = async () => {
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-    const found = await ui.find({ text: /[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/ })
+    const found = await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (execute|review)\b/ })
     await ui.unmount()
-    return found?.text.match(/[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/)?.[1]
+    return found?.text.match(/^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (execute|review)\b/)?.[1]
   }
   await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
   await $.tool.call({ tool: 'Skill', skill: 'superpowers:requesting-code-review', agentId: 'A1' } as never)
@@ -447,23 +451,54 @@ test('a skill a subagent loads never moves the stage', async ($, on) => {
   expect(await current()).toBe('review')
 })
 
-test('a narrow pane folds the pipeline and skills instead of overflowing', async ($, on) => {
+test('a narrow pane keeps the current stage row and folds skills instead of overflowing', async ($, on) => {
   mock.clock(on)
   on('skill.prompt', () => ({ text: '' }))
   for (const skill of ['brainstorming', 'writing-plans', 'using-git-worktrees', 'subagent-driven-development', 'requesting-code-review'])
     await $.skill.prompt({ skill: `superpowers:${skill}`, text: '' })
   const ui = await $.ui.mount({ ...pane, props: { ...pane.props, bodyColumns: 20 }, surface: 'terminal' } as never)
   const W = 30 // the pane never draws narrower
-  expect((await ui.find({ text: /^✓… .*●review ○finish$/ }))?.text.length).toBeLessThanOrEqual(W - 4)
+  expect(await ui.find({ text: /^● review +\d\d:\d\d$/ })).toBeDefined()
   expect((await ui.find({ text: /^… → .*requesting-code-review$/ }))?.text.length).toBeLessThanOrEqual(W - 4)
 })
 
-test('a narrow pane keeps the current stage when it folds the pipeline', async ($, on) => {
+test('a narrow pane keeps the current stage row', async ($, on) => {
   mock.clock(on)
   on('skill.prompt', () => ({ text: '' }))
   for (const skill of ['writing-plans', 'subagent-driven-development']) await $.skill.prompt({ skill: `superpowers:${skill}`, text: '' })
   const ui = await $.ui.mount({ ...pane, props: { ...pane.props, bodyColumns: 20 }, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓… ●execute ○review ○finish$/ })).toBeDefined()
+  expect(await ui.find({ text: /^● execute +\d\d:\d\d$/ })).toBeDefined()
+  expect(await ui.find({ text: /^○ review$/ })).toBeDefined()
+})
+
+test('timeline nests the plan bar and role agents under execute', async ($, on) => {
+  mock.clock(on)
+  on('fs.read', (_$, e) => (e.path === SP ? { value: '### Task 1: A\n- [x] a\n### Task 2: B\n- [ ] b\n### Task 3: C\n- [ ] c\n' } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'I2' }))
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  await $.agent.spawn({ prompt: 'p', description: 'Implement Task 2: x' } as never)
+  const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  const row = await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] execute .* 1\/3 +\d\d:\d\d$/ })
+  expect(row?.text.length).toBe(42) // W - 4: the time sits on the right edge
+  expect(await ui.find({ text: /^ 1\/3$/ })).toBeDefined()
+  expect(await ui.find({ text: /^  │ $/ })).toBeDefined()
+  expect(await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] impl #2 +Haiku 5\.5 00:00$/ })).toBeDefined()
+  expect(await ui.find({ text: /^○ review$/ })).toBeDefined()
+  expect(await ui.find({ text: /^○ finish$/ })).toBeDefined()
+})
+
+test('a narrow pane cuts labels, keeps times', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  for (const skill of ['brainstorming', 'writing-plans', 'subagent-driven-development']) await $.skill.prompt({ skill: `superpowers:${skill}`, text: '' })
+  const ui = await $.ui.mount({ ...pane, props: { ...pane.props, bodyColumns: 20 }, surface: 'terminal' } as never)
+  const rows = await ui.findAll({ text: /^[✓○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (brainstorm|spec|plan|execute|review|finish)/ })
+  expect(rows.length).toBe(6)
+  for (const r of rows) expect(r.text.length).toBeLessThanOrEqual(26)
+  expect(await ui.find({ text: /^✓ brainstorm +\d\d:\d\d$/ })).toBeDefined()
 })
 
 test('a running role agent without a task number stays in view after many tasks', async ($, on) => {
@@ -482,8 +517,8 @@ test('a running role agent without a task number stays in view after many tasks'
   await $.agent.spawn({ prompt: 'p', description: 'Review code changes' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   // working first, then the latest spawned
-  expect((await ui.findAll({ text: /^. (review|impl) / })).map(r => r.text.split(/ {2,}/)[0])).toEqual([
-    expect.stringMatching(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] review Review code …$/),
+  expect((await ui.findAll({ text: /^. (review|impl) [#A-Z]/ })).map(r => r.text.split(/ {2,}/)[0])).toEqual([
+    expect.stringMatching(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] review Review c…$/),
     '✓ review #3',
     '✓ impl #3',
     '✓ review #2',
@@ -542,7 +577,7 @@ test('a review without a task number in its description takes none from its prom
   await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
   await $.agent.spawn({ prompt: 'The plan says: ### Task 3: Parser', description: 'Review spec document' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] review Review spec / })).toBeDefined()
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] review Review s… / })).toBeDefined() // cut 4 earlier behind the guide
   expect(await ui.find({ text: /review #3/ })).toBeUndefined()
 })
 
@@ -564,11 +599,12 @@ test("SDD's whole-branch reviewer reaches the review stage", async ($, on) => {
   await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
   await $.agent.spawn({ prompt: 'p', description: 'Review Task 1 (spec + quality)' } as never)
   let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]execute$/ })).toBeDefined() // a per-task review is still execute (spinning: agents run)
+  expect(await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] execute +\d\d:\d\d$/ })).toBeDefined() // a per-task review is still execute (spinning: agents run)
   await ui.unmount()
   await $.agent.spawn({ prompt: 'p', description: 'Review code changes' } as never)
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓execute [●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]review$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ execute +\d\d:\d\d$/ })).toBeDefined()
+  expect(await ui.find({ text: /^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] review +\d\d:\d\d$/ })).toBeDefined()
 })
 
 test("7.0.0 brainstorming's builder check shows as a review under superpowers", async ($, on) => {
@@ -580,6 +616,11 @@ test("7.0.0 brainstorming's builder check shows as a review under superpowers", 
   await $.agent.spawn({ prompt: 'You are a talented software engineer…', description: 'Builder check' } as never)
   await $.turn.complete({ ...(sdd('nothing important left') as object), agentId: 'B1' } as never)
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^✓ review Builder check +approved 00:00$/ })).toBeDefined()
+  expect(await ui.find({ text: /^✓ review Builder c… +approved 00:00$/ })).toBeDefined()
   expect(await ui.find({ text: /^AGENTS$/ })).toBeUndefined()
+})
+
+test('dur reads mm:ss, then h:mm:ss from an hour', () => {
+  expect(dur(65_000)).toBe('01:05')
+  expect(dur(3_725_000)).toBe('1:02:05')
 })

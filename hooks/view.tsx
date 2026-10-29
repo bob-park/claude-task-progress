@@ -1,7 +1,8 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Activity, AgentRun, Main, Sp, Task } from '../types'
-import { fitTail, pipeline } from './superpowers'
+import { fitTail, pipeline, stageTimes } from './superpowers'
+import type { Step } from './superpowers'
 
 /** `$.ui.resolve(e)`: the surface's Box, Text, ... */
 export type UI = ReturnType<EngineInterface['ui']['resolve']>
@@ -35,6 +36,8 @@ export const mmss = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
+/** `mm:ss`, from an hour `h:mm:ss` */
+export const dur = (ms: number) => (ms >= 3_600_000 ? `${Math.floor(ms / 3_600_000)}:${mmss(ms % 3_600_000)}` : mmss(ms))
 // `26.10.09 PM 02:05`
 export const doneTime = (at: number) => {
   const d = new Date(at)
@@ -99,41 +102,57 @@ export const mainPanel = ({ Box, Text }: UI, m: Main, v: Frame) => {
 }
 
 // ---- progress: the bar with done/total right after it, and the current step below
-export const progressLines = ({ Text }: UI, list: Task[], doneAt: number | null, v: Frame) => {
+const count = (list: Task[]) => list.filter(t => t.status === 'completed').length
+
+/** The bar cells and ` done/total`, `barW` cells wide */
+const planBar = ({ Text }: UI, list: Task[], barW: number, v: Frame) => {
   const total = list.length
-  const done = list.filter(t => t.status === 'completed').length
-  const active = list.filter(t => t.status === 'in_progress')
-  const barW = Math.max(10, v.W - 4 - ` ${total}/${total} · 100%`.length - 1)
+  const done = count(list)
+  const active = list.filter(t => t.status === 'in_progress').length
   const filled = Math.round((done / total) * barW)
-  const activeCells = Math.round(((done + active.length) / total) * barW) - filled
-  const percent = Math.round((done / total) * 100)
-  const next = list.find(t => t.status === 'pending')
+  const activeCells = Math.round(((done + active) / total) * barW) - filled
   // a bright cell sweeps across the in-progress part of the bar while working
   const sweep = v.busy && activeCells > 0 ? v.f % activeCells : -1
   return [
-    // count sits right after the bar so the eye doesn't travel
-    <Text key="bar" wrap="truncate">
-      <Text color="green">{'█'.repeat(filled)}</Text>
-      {sweep >= 0 ? (
-        <Text color="yellow">
-          {'▓'.repeat(sweep)}
-          <Text bold>█</Text>
-          {'▓'.repeat(activeCells - sweep - 1)}
-        </Text>
-      ) : (
-        <Text color="yellow">{'▓'.repeat(activeCells)}</Text>
-      )}
-      <Text dimColor>{'░'.repeat(barW - filled - activeCells)}</Text>
-      <Text bold color="blue">{` ${done}/${total}`}</Text>
-      <Text dimColor>{` · ${percent}%`}</Text>
-    </Text>,
-    done === total ? (
-      <Text key="now" color="green">{doneAt !== null ? `✓ completed · ${doneTime(doneAt)}` : '✓ completed'}</Text>
-    ) : active.length > 0 ? (
-      <Text key="now" color="yellow" wrap="truncate">{`${v.busy ? v.spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
+    <Text key="done" color="green">{'█'.repeat(filled)}</Text>,
+    sweep >= 0 ? (
+      <Text key="active" color="yellow">
+        {'▓'.repeat(sweep)}
+        <Text bold>█</Text>
+        {'▓'.repeat(activeCells - sweep - 1)}
+      </Text>
     ) : (
-      <Text key="now" dimColor wrap="truncate">{`○ 다음: ${next ? numbered(next) : '—'}`}</Text>
+      <Text key="active" color="yellow">{'▓'.repeat(activeCells)}</Text>
     ),
+    <Text key="todo" dimColor>{'░'.repeat(barW - filled - activeCells)}</Text>,
+    // count sits right after the bar so the eye doesn't travel
+    <Text key="count" bold color="blue">{` ${done}/${total}`}</Text>,
+  ]
+}
+
+/** What runs now, the next one, or when it all finished */
+const planNow = ({ Text }: UI, list: Task[], doneAt: number | null, v: Frame) => {
+  const active = list.filter(t => t.status === 'in_progress')
+  const next = list.find(t => t.status === 'pending')
+  return count(list) === list.length ? (
+    <Text key="now" color="green">{doneAt !== null ? `✓ completed · ${doneTime(doneAt)}` : '✓ completed'}</Text>
+  ) : active.length > 0 ? (
+    <Text key="now" color="yellow" wrap="truncate">{`${v.busy ? v.spin : '▸'} ${active.map(numbered).join(', ')}`}</Text>
+  ) : (
+    <Text key="now" dimColor wrap="truncate">{`○ 다음: ${next ? numbered(next) : '—'}`}</Text>
+  )
+}
+
+export const progressLines = (ui: UI, list: Task[], doneAt: number | null, v: Frame) => {
+  const { Text } = ui
+  const total = list.length
+  const barW = Math.max(10, v.W - 4 - ` ${total}/${total} · 100%`.length - 1)
+  return [
+    <Text key="bar" wrap="truncate">
+      {planBar(ui, list, barW, v)}
+      <Text dimColor>{` · ${Math.round((count(list) / total) * 100)}%`}</Text>
+    </Text>,
+    planNow(ui, list, doneAt, v),
   ]
 }
 
@@ -181,44 +200,73 @@ export const agentsPanel = (ui: UI, all: AgentRun[], v: Frame) => {
   )
 }
 
-// ---- superpowers: path badge, pipeline, plan progress, its agents by role, extras
+// ---- superpowers: path badge, then a timeline: a row per stage with its time; the plan sits on execute, its agents under the current stage
 const ROLES_SHOWN = 4
+const STAGE_COLOR = { done: 'green', current: 'yellow', todo: undefined } as const
 export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame) => {
   const { Box, Text } = ui
   const mark = { done: '✓', current: v.busy ? v.spin : '●', todo: '○' }
-  const steps = pipeline(sp)
-  // only done stages fold: the current one never leaves the line
-  const line = fitTail(
-    steps.map(s => `${mark[s.state]}${s.stage}`),
-    ' ',
-    v.W - 4,
-    '✓…',
-    steps.filter(s => s.state === 'done').length,
+  const times = stageTimes(sp, v.now)
+  // nested rows draw 4 narrower behind the guide
+  const inner = { ...v, W: v.W - 4 }
+  const nested = (key: string, row: JSX.Element) => (
+    <Box key={key}>
+      <Text dimColor>{'  │ '}</Text>
+      {row}
+    </Box>
   )
   // working ones first, then the latest: SDD runs one at a time, so that is where it is now
   const roles = runs
     .filter(r => r.role)
     .sort((x, y) => Number(y.status === 'running' || y.status === 'waiting') - Number(x.status === 'running' || x.status === 'waiting') || y.n - x.n)
     .slice(0, ROLES_SHOWN)
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={v.W}>
-      <Box justifyContent="space-between">
-        <Text color="yellow" bold>⚡ SUPERPOWERS</Text>
-        {sp.path ? <Text color="magenta" bold>{sp.path.toUpperCase()}</Text> : null}
-      </Box>
-      <Text wrap="truncate">{line}</Text>
-      {plan.length > 0 ? progressLines(ui, plan, sp.doneAt, v) : null}
-      {roles.map(r =>
+    .map(r =>
+      nested(
+        `role${r.n}`,
         agentRow(
           ui,
           r,
           `${r.role} ${r.taskN ? `#${r.taskN}` : r.label}`,
           ` ${r.verdict ? (r.verdict === 'ok' ? 'approved' : 'issues') : prettyModel(r.model)} ${mmss((r.endedAt ?? v.now) - r.startedAt)}`,
           ' ',
-          v,
+          inner,
           r.verdict === 'issues' ? '⚠' : undefined,
         ),
-      )}
+      ),
+    )
+  const row = ({ stage, state }: Step) => {
+    const ms = times[stage]
+    const time = ms === undefined ? '' : ` ${dur(ms)}`
+    const color = STAGE_COLOR[state]
+    const head = `${mark[state]} ${stage}`
+    if (stage === 'execute' && plan.length > 0) {
+      const total = plan.length
+      const barW = Math.max(3, v.W - 4 - head.length - 1 - ` ${total}/${total}`.length - time.length)
+      return (
+        <Text key={stage} wrap="truncate">
+          <Text color={color} bold={state === 'current'} dimColor={state === 'todo'}>{`${head} `}</Text>
+          {planBar(ui, plan, barW, v)}
+          <Text dimColor={state !== 'current'}>{time}</Text>
+        </Text>
+      )
+    }
+    return (
+      <Text key={stage} color={color} bold={state === 'current'} dimColor={state === 'todo'} wrap="truncate">
+        {time ? lineUp(mark[state], stage, time, v.W, ' ') : head}
+      </Text>
+    )
+  }
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={v.W}>
+      <Box justifyContent="space-between">
+        <Text color="yellow" bold>⚡ SUPERPOWERS</Text>
+        {sp.path ? <Text color="magenta" bold>{sp.path.toUpperCase()}</Text> : null}
+      </Box>
+      {pipeline(sp).flatMap(s => [
+        row(s),
+        ...(s.stage === 'execute' && plan.length > 0 ? [nested('now', planNow(ui, plan, sp.doneAt, inner))] : []),
+        ...(s.state === 'current' ? roles : []),
+      ])}
       {sp.extras.length > 0 ? <Text dimColor wrap="truncate">{sp.extras.map(x => `+ ${x}`).join('  ')}</Text> : null}
     </Box>
   )
