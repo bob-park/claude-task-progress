@@ -67,6 +67,9 @@ test('SDD dispatches get a role and task number; reports a verdict', () => {
   expect(roleOf('Review spec document')).toBe('review')
   expect(roleOf('Builder check on the design doc')).toBe('review') // 7.0.0 brainstorming
   expect(roleOf('Explore auth')).toBeUndefined()
+  expect(roleOf('Fix Task 3: address review findings')).toBe('impl')
+  expect(roleOf('Fix final review findings')).toBe('impl')
+  expect(taskNOf('review task 3 (spec + quality)')).toBe('3')
   expect(taskNOf('Review Task 12 (spec + quality)')).toBe('12')
   expect(taskNOf('Explore auth')).toBeUndefined()
   expect(verdictOf('**Task quality:** Approved')).toBe('ok')

@@ -401,6 +401,52 @@ test('SDD agents show by role under superpowers, not under agents', async ($, on
   expect(await ui.find({ text: /\d: (Implement|Review) Task/ })).toBeUndefined()
 })
 
+test('review waits for the plan to be done', async ($, on) => {
+  mock.clock(on)
+  let plan = '### Task 1: A\n- [x] a\n### Task 2: B\n- [ ] b\n'
+  on('fs.read', (_$, e) => (e.path === SP ? { value: plan } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', (_$, e) => ({ model: 'claude-haiku-5-5', agentId: e.description }))
+  const current = async () => {
+    const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+    const found = await ui.find({ text: /[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/ })
+    await ui.unmount()
+    return found?.text.match(/[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/)?.[1]
+  }
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  await $.agent.spawn({ prompt: 'p', description: 'Review the change' } as never)
+  expect(await current()).toBe('execute')
+  await $.skill.prompt({ skill: 'superpowers:receiving-code-review', text: '' })
+  expect(await current()).toBe('execute')
+
+  plan = plan.replace('- [ ] b', '- [x] b')
+  await $.tool.call({ tool: 'Read', file_path: SP } as never)
+  await $.agent.spawn({ prompt: 'p', description: 'Final whole-branch review' } as never)
+  expect(await current()).toBe('review')
+})
+
+test('a skill a subagent loads never moves the stage', async ($, on) => {
+  mock.clock(on)
+  on('skill.prompt', () => ({ text: '' }))
+  on('tool.call', async (_$, e) => {
+    if (e.tool === 'Skill') await $.skill.prompt({ skill: 'superpowers:requesting-code-review', text: '' })
+    return { result: {} } as never
+  })
+  const current = async () => {
+    const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+    const found = await ui.find({ text: /[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/ })
+    await ui.unmount()
+    return found?.text.match(/[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](execute|review)/)?.[1]
+  }
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  await $.tool.call({ tool: 'Skill', skill: 'superpowers:requesting-code-review', agentId: 'A1' } as never)
+  expect(await current()).toBe('execute')
+  await $.tool.call({ tool: 'Skill', skill: 'superpowers:requesting-code-review' } as never)
+  expect(await current()).toBe('review')
+})
+
 test('a narrow pane folds the pipeline and skills instead of overflowing', async ($, on) => {
   mock.clock(on)
   on('skill.prompt', () => ({ text: '' }))

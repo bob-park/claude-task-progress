@@ -69,11 +69,11 @@ export const pipeline = (sp: Sp): Step[] => {
   })
 }
 
-/** SDD dispatches `Implement Task N: …`, `Review Task N (…)`, `Re-review Task N …`; 7.0.0 brainstorming a builder check */
+/** SDD dispatches `Implement Task N: …`, `Fix …`, `Review Task N (…)`, `Re-review Task N …`; 7.0.0 brainstorming a builder check */
 export const roleOf = (description: string): Role | undefined =>
-  /^implement\b/i.test(description) ? 'impl' : /review|builder/i.test(description) ? 'review' : undefined
+  /^(implement|fix)\b/i.test(description) ? 'impl' : /review|builder/i.test(description) ? 'review' : undefined
 
-export const taskNOf = (text: string) => /\bTask\s+(\d+)/.exec(text)?.[1]
+export const taskNOf = (text: string) => /\btask\s+(\d+)/i.exec(text)?.[1]
 
 /** A reviewer's report: `Needs fixes` / `NOT ADDRESSED` / ❌ before `Approved` / `ADDRESSED` / ✅ / a builder check's `nothing important left` */
 export const verdictOf = (answer: string): 'ok' | 'issues' | undefined =>

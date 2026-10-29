@@ -101,6 +101,10 @@ const shownTasks = (todos: Task[], p: Plan | undefined) => {
 }
 
 const allDone = (list: Task[]) => list.length > 0 && list.every(t => t.status === 'completed')
+// SDD and executing-plans review the whole branch only once every task is done; review skills load mid-plan too
+const reviewReady = (p: Plan | undefined) => !isSpPlan(p) || allDone(p!.tasks)
+// ponytail: one counter for all agents, a main-loop skill loaded while a subagent's loads is skipped too; key by agent if that shows up
+let subagentSkills = 0
 
 // the moment each list became all done; cleared once something is open again
 const stampDone = async ($: EngineInterface) => {
@@ -200,7 +204,7 @@ export const register: Register = on => {
       // the description alone: prompts quote plan text, Task numbers included
       const taskN = role ? taskNOf(e.description) : undefined
       // SDD's whole-branch review has no task: execution is over
-      if (role === 'review' && !taskN && s?.current === 'execute') await updateSp($, x => reach(x, 'review'))
+      if (role === 'review' && !taskN && s?.current === 'execute' && reviewReady(await read($, plan))) await updateSp($, x => reach(x, 'review'))
       // next after the highest still listed: one left running keeps its number
       await update($, agents, all =>
         trimAgents({
@@ -220,7 +224,9 @@ export const register: Register = on => {
     await update($, skills, all => (all?.at(-1)?.name === name ? all : [...(all ?? []), { name, at }].slice(-MAX_SKILLS)))
     const stage = stageOf(e.skill)
     const extra = extraOf(e.skill)
-    if (stage) await updateSp($, s => reach(s, stage))
+    // a skill a subagent loads (`tool.call` knows the agent, this event doesn't) never moves the stage
+    const moves = stage && subagentSkills === 0 && (stage !== 'review' || reviewReady(await read($, plan)))
+    if (moves) await updateSp($, s => reach(s, stage))
     else if (extra) await updateSp($, s => addExtra(s, extra))
     return next(e)
   })
@@ -250,11 +256,15 @@ export const register: Register = on => {
       if (id) await update($, activity, all => (all ?? []).map(a => (a.id === id ? { ...a, status } : a)))
     }
     let ran: Awaited<ReturnType<typeof next>>
+    const sub = e.tool === 'Skill' && !!e.agentId
+    if (sub) subagentSkills++
     try {
       ran = await next(e)
     } catch (err) {
       await settle('error')
       throw err
+    } finally {
+      if (sub) subagentSkills--
     }
     await settle(ran.deny !== undefined || ran.isError ? 'error' : 'ok')
     if (ran.deny !== undefined || ran.isError) return ran
