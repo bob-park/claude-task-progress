@@ -57,7 +57,18 @@ export const stageTimes = (sp: Sp, now: number) => {
   return times
 }
 
-export const addExtra = (sp: Sp, extra: string): Sp => (sp.extras.includes(extra) ? sp : { ...sp, extras: [...sp.extras, extra] })
+/** The stage an agent ran in: the latest one started by its start, a tie going to the later stage. Before stage times (0.7), the current one; before the cycle, none */
+export const stageOfRun = (sp: Sp, startedAt: number): Stage | undefined => {
+  if (Object.keys(sp.at).length === 0) return sp.current
+  let best: Stage | undefined
+  for (const s of ORDER) {
+    const t = sp.stages.includes(s) ? sp.at[s] : undefined
+    if (t !== undefined && t <= startedAt && (best === undefined || t >= sp.at[best]!)) best = s
+  }
+  return best
+}
+
+export const addExtra =(sp: Sp, extra: string): Sp => (sp.extras.includes(extra) ? sp : { ...sp, extras: [...sp.extras, extra] })
 
 // 7.0.1 sizes the work in plain words (a small change, a project) or names a spike; 6.4.1 named three paths
 const PATH_OF: Record<string, SpPath> = { spike: 'spike', 'small change': 'small', '작은 변경': 'small', 'a project': 'project', bounded: 'small', architectural: 'project' }
