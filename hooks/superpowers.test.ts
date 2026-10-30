@@ -126,3 +126,9 @@ test('an agent belongs to the latest stage started by its start, a tie to the la
   expect(stageOfRun(sp, 5)).toBeUndefined() // before this cycle
   expect(stageOfRun({ ...sp, at: {} }, 5)).toBe('review') // saved before stage times: the current stage
 })
+
+test('a stage reached out of order (SDD sets up a worktree) never takes the agents of the stage after it', () => {
+  let sp = reach(reach(EMPTY_SP, 'brainstorm', 10), 'execute', 20)
+  sp = reach(sp, 'worktree', 30)
+  expect(stageOfRun(sp, 40)).toBe('execute')
+})

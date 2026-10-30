@@ -36,4 +36,4 @@
 
 ## 구현자에게 남김
 - 단계 판정 함수는 `superpowers.ts`에 두고 `superpowers.test.ts`에 테스트 하나를 추가한다.
-- 판정은 `startedAt >= at[stage]`인 단계 중 `at`이 가장 큰 단계로 한다.
+- 판정은 `startedAt >= at[stage]`인 단계 중 순서(`ORDER`)상 가장 뒤 단계로 한다. 순서를 벗어나 도달한 단계(execute 뒤의 worktree)가 다음 단계의 agent를 가져가지 않게 하려는 것이다.
