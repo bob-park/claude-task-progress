@@ -14,7 +14,7 @@ const activity = atom({ plugin: 'task-progress', key: 'activity' } as const, [] 
 const sp = atom({ plugin: 'task-progress', key: 'sp' } as const, EMPTY_SP)
 const updateSp = ($: EngineInterface, patch: (s: Sp) => Sp) => update($, sp, s => patch(withAt({ ...EMPTY_SP, ...s })))
 
-const MAX_AGENTS = 20
+const MAX_AGENTS = 50
 const MAX_ACTIVITY = 10
 const MAX_SKILLS = 30
 /** An agent saved before `status` existed (0.6, kept across a hot reload) reads from its end time */

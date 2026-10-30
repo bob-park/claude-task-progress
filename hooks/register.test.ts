@@ -236,19 +236,19 @@ test('agents list below the tasks: num, label, model and mm:ss', async ($, on) =
   expect(await ui.find({ text: /^✓ 1: Explore auth / })).toBeDefined()
 })
 
-test('agents show the latest 3 ended ones, and keep at most 20', async ($, on) => {
+test('agents show the latest 3 ended ones, and keep at most 50', async ($, on) => {
   const clock = mock.clock(on)
   let k = 0
   on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: `A${++k}` }))
   on('turn.complete', () => ({ text: '' }))
-  for (let i = 1; i <= 22; i++) {
+  for (let i = 1; i <= 52; i++) {
     await $.agent.spawn({ prompt: 'p', description: `Job ${i}` } as never)
     await clock.advance(1000)
     await $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'T', agentId: `A${i}`, reason: 'answer' } as never)
   }
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^  0 running · 20 done$/ })).toBeDefined()
-  expect((await ui.findAll({ text: /^✓ \d+: / })).map(r => r.text.split(' -')[0])).toEqual(['✓ 22: Job 22', '✓ 21: Job 21', '✓ 20: Job 20'])
+  expect(await ui.find({ text: /^  0 running · 50 done$/ })).toBeDefined()
+  expect((await ui.findAll({ text: /^✓ \d+: / })).map(r => r.text.split(' -')[0])).toEqual(['✓ 52: Job 52', '✓ 51: Job 51', '✓ 50: Job 50'])
 })
 
 test('a TaskCreate task shows its number on the current line', async ($, on) => {
@@ -522,6 +522,7 @@ test('a running role agent without a task number stays in view after many tasks'
     '✓ review #3',
     '✓ impl #3',
     '✓ review #2',
+    '✓ impl #2',
   ])
 })
 
@@ -623,4 +624,51 @@ test("7.0.0 brainstorming's builder check shows as a review under superpowers", 
 test('dur reads mm:ss, then h:mm:ss from an hour', () => {
   expect(dur(65_000)).toBe('01:05')
   expect(dur(3_725_000)).toBe('1:02:05')
+})
+
+test('each stage keeps its agents: issues first, 5 rows, then … more', async ($, on) => {
+  const clock = mock.clock(on)
+  let k = 0
+  on('fs.read', (_$, e) => (e.path === SP ? { value: [1, 2, 3, 4, 5, 6].map(n => `### Task ${n}: T\n- [x] a\n`).join('') } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: `A${++k}` }))
+  on('turn.complete', () => ({ text: '' }))
+  const done = (answer = '') => $.turn.complete({ ...(sdd(answer) as object), agentId: `A${k}` } as never)
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
+  await $.agent.spawn({ prompt: 'p', description: 'Builder check' } as never)
+  await done('nothing important left')
+  await clock.advance(1000)
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  for (let n = 1; n <= 6; n++) {
+    await $.agent.spawn({ prompt: 'p', description: `Implement Task ${n}: x` } as never)
+    await done()
+    await $.agent.spawn({ prompt: 'p', description: `Review Task ${n} (spec + quality)` } as never)
+    await done(n === 1 ? '**Task quality:** Needs fixes' : 'Approved')
+  }
+  await clock.advance(1000)
+  await $.agent.spawn({ prompt: 'p', description: 'Review code changes' } as never)
+  await done('Approved')
+  await clock.advance(1000)
+  await $.skill.prompt({ skill: 'superpowers:finishing-a-development-branch', text: '' })
+  const ui = await $.ui.mount({ ...pane, props: { ...pane.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' } as never)
+  const rows = (await ui.findAll({ text: /^(. (brainstorm|spec|plan|execute|review|finish)\b|. (impl|review) |  … \d+ more$)/ })).map(r => r.text.trim().split(/ {2,}/)[0])
+  expect(rows).toEqual([
+    '✓ brainstorm',
+    '✓ review Builder c…',
+    '✓ spec',
+    '✓ plan',
+    expect.stringMatching(/^✓ execute █+ 6\/6 /),
+    '✓ execute', // the execute row's label part
+    '⚠ review #1',
+    '✓ review #6',
+    '✓ impl #6',
+    '✓ review #5',
+    '✓ impl #5',
+    '… 7 more',
+    '✓ review',
+    expect.stringMatching(/^✓ review Review c/),
+    expect.stringMatching(/^. finish$/),
+  ])
 })
