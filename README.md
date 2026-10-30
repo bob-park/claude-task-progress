@@ -17,7 +17,7 @@ Claude Code mod: a pane docked to the right of the transcript that monitors any 
 
 While Claude or an agent works, spinners turn and a bright cell sweeps the in-progress part of each progress bar.
 
-The demo runs a mock superpowers cycle (a notification-settings page, 10 plan tasks, one impl subagent each, task and whole-branch reviews, then 3 follow-up tasks), sped up 6×:
+The demo runs a mock superpowers cycle in the same session that is being watched (a notification-settings page: brainstorm → spec → plan → 10 plan tasks, one impl subagent each, a whole-branch review, then finish), sped up 6×:
 
 ![task-progress demo](docs/images/task-progress.gif)
 
