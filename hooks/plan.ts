@@ -1,6 +1,6 @@
 import type { Task } from '../types'
 
-const TASK_HEADING = /^###\s+Task\s+(\d+[a-z]?):\s*(.+)$/
+const TASK_HEADING = /^###\s+Task\s+(\d+[a-zA-Z]?):\s*(.+)$/
 const CHECKBOX = /^\s*[-*]\s+\[([ xX])\]\s+(.+)$/
 const NUMBERED = /^(\d+)\.\s+(?:\[([ xX])\]\s+)?(.+)$/
 
@@ -56,7 +56,7 @@ export const parsePlan = (text: string, ledger?: string): Task[] => {
   const tasks: Array<{ n: string; label: string; steps: boolean[] }> = []
   for (const line of lines) {
     const h = TASK_HEADING.exec(line)
-    if (h) tasks.push({ n: h[1]!, label: clean(h[2]!), steps: [] })
+    if (h) tasks.push({ n: h[1]!.toLowerCase(), label: clean(h[2]!), steps: [] })
     else {
       const c = CHECKBOX.exec(line)
       if (c) tasks.at(-1)?.steps.push(c[1] !== ' ')
@@ -64,10 +64,10 @@ export const parsePlan = (text: string, ledger?: string): Task[] => {
   }
   if (tasks.length > 0) {
     const lines = [...(ledger ?? '').matchAll(/^[\s>*+-]*(?:\*\*)?Task\s+(\d+[a-z]?):\s*(complete(?=\s*(?:[(*.]|$))|dispatched\b)/gim)]
-    const logged = new Set(lines.filter(m => m[2]!.toLowerCase() === 'complete').map(m => m[1]))
+    const logged = new Set(lines.filter(m => m[2]!.toLowerCase() === 'complete').map(m => m[1]!.toLowerCase()))
     const items = tasks.map(t => ({ label: t.label, n: t.n, done: logged.has(t.n) || (t.steps.length > 0 && t.steps.every(Boolean)) }))
     // a dispatched task still open is what runs now; several when dispatched in parallel
-    const running = new Set(lines.filter(m => m[2]!.toLowerCase() === 'dispatched').map(m => m[1]).filter(n => items.some(i => i.n === n && !i.done)))
+    const running = new Set(lines.filter(m => m[2]!.toLowerCase() === 'dispatched').map(m => m[1]!.toLowerCase()).filter(n => items.some(i => i.n === n && !i.done)))
     if (running.size > 0)
       return items.map(i => ({ status: i.done ? 'completed' : running.has(i.n) ? 'in_progress' : 'pending', label: i.label, n: i.n }))
     return withCurrent(items, logged.size > 0 || tasks.some(t => t.steps.some(Boolean)))

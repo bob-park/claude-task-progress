@@ -102,6 +102,7 @@ test('SDD dispatches get a role and task number; reports a verdict', () => {
   expect(taskNOf('review task 3 (spec + quality)')).toBe('3')
   expect(taskNOf('Review Task 12 (spec + quality)')).toBe('12')
   expect(taskNOf('Implement Task 3b: AI worker')).toBe('3b') // a task added mid-run
+  expect(taskNOf('Review Task 3B (spec + quality)')).toBe('3b')
   expect(taskNOf('Explore auth')).toBeUndefined()
   expect(verdictOf('**Task quality:** Approved')).toBe('ok')
   expect(verdictOf('✅ Spec compliant\n**Task quality:** Needs fixes')).toBe('issues')

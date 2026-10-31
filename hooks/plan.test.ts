@@ -132,3 +132,9 @@ test('a ledger note that only starts with complete is not a completion', () => {
   expect(parsePlan(plan, '- Task 1: complete\n- **Task 2: complete**').map(t => t.status)).toEqual(['completed', 'completed'])
   expect(parsePlan(plan, 'Task 1: complete (commits a..b, tests: t → ok)\nTask 2: complete.').map(t => t.status)).toEqual(['completed', 'completed'])
 })
+
+test('upper-case task suffixes read as lower-case everywhere', () => {
+  const plan = '### Task 3: C\n- [x] a\n### Task 3B: W\n- [ ] b\n### Task 4: D\n- [ ] c'
+  expect(parsePlan(plan).map(t => `${t.n} ${t.status}`)).toEqual(['3 completed', '3b in_progress', '4 pending'])
+  expect(parsePlan(plan, '- Task 4: dispatched\n- Task 3B: dispatched').map(t => `${t.n} ${t.status}`)).toEqual(['3 completed', '3b in_progress', '4 in_progress'])
+})

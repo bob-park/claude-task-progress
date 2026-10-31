@@ -672,3 +672,29 @@ test('the current task line ends with the phase of its running agent', async ($,
   ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
   expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] #2 Wire it +review 00:00$/ })).toBeDefined()
 })
+
+test('a long current task is cut to the pane before it shimmers', async ($, on) => {
+  mock.clock(on)
+  const files: Record<string, string> = {
+    [SP]: '### Task 1: A\n- [ ] a\n### Task 2: Wire the very long detector name through every layer\n- [ ] b\n',
+    [LEDGER]: '# SDD ledger — plan: docs/superpowers/plans/2026-01-01-x.md\n- Task 2: dispatched\n',
+  }
+  on('fs.read', (_$, e) => (e.path in files ? { value: files[e.path]! } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('skill.prompt', () => ({ text: '' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  const narrow = { ...pane, props: { ...pane.props, bodyColumns: 30 }, surface: 'terminal' }
+
+  let ui = await $.ui.mount(narrow as never)
+  let line = await ui.find({ text: /^▸ #2 Wire/ })
+  expect(line?.text.length).toBe(22) // W 30 - 4 border/padding - 4 guide
+  expect(line?.text.endsWith('…')).toBe(true)
+  await ui.unmount()
+
+  await $.turn.start({ text: 'go', turnId: 'T1' })
+  ui = await $.ui.mount(narrow as never)
+  line = await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] #2 Wire.*…$/ })
+  expect(line?.text.length).toBe(22)
+})

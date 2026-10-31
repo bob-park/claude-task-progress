@@ -170,7 +170,9 @@ const spNow = (ui: UI, list: Task[], doneAt: number | null, runs: AgentRun[], v:
   const task = active[0]!
   const run = runs.filter(r => r.role && r.taskN === task.n && (r.status === 'running' || r.status === 'waiting')).sort((x, y) => y.n - x.n)[0]
   const icon = v.busy ? v.spin : '▸'
-  const line = run ? lineUp(icon, numbered(task), ` ${phaseOf(run)} ${mmss(v.now - run.startedAt)}`, v.W, ' ') : `${icon} ${numbered(task)}`
+  // cut to the pane first, so the bright cell never sweeps past the edge
+  const plain = `${icon} ${numbered(task)}`
+  const line = run ? lineUp(icon, numbered(task), ` ${phaseOf(run)} ${mmss(v.now - run.startedAt)}`, v.W, ' ') : plain.length > v.W - 4 ? `${plain.slice(0, v.W - 5)}…` : plain
   return v.busy ? (
     <Text key="now" wrap="truncate">
       {shimmer(line, v.f).map((r, i) => (
@@ -309,7 +311,7 @@ export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame
       {pipeline(sp).flatMap(s => [
         row(s),
         ...(s.stage === 'execute' && plan.length > 0 ? [nested('now', spNow(ui, plan, sp.doneAt, runs, inner))] : []),
-        ...(s.state === 'current' ? roles : []),
+        ...rolesOf(s.stage),
       ])}
       {sp.extras.length > 0 ? <Text dimColor wrap="truncate">{sp.extras.map(x => `+ ${x}`).join('  ')}</Text> : null}
     </Box>
