@@ -99,7 +99,8 @@ export const pipeline = (sp: Sp): Step[] => {
 export const roleOf = (description: string): Role | undefined =>
   /^(implement|fix)\b/i.test(description) ? 'impl' : /review|builder/i.test(description) ? 'review' : undefined
 
-export const taskNOf = (text: string) => /\btask\s+(\d+)/i.exec(text)?.[1]
+/** `Task 3b` names a task added mid-run */
+export const taskNOf = (text: string) => /\btask\s+(\d+[a-z]?)\b/i.exec(text)?.[1]
 
 /** A reviewer's report: `Needs fixes` / `NOT ADDRESSED` / ❌ before `Approved` / `ADDRESSED` / ✅ / a builder check's `nothing important left` */
 export const verdictOf = (answer: string): 'ok' | 'issues' | undefined =>

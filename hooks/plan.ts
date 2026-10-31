@@ -1,6 +1,6 @@
 import type { Task } from '../types'
 
-const TASK_HEADING = /^###\s+Task\s+(\d+):\s*(.+)$/
+const TASK_HEADING = /^###\s+Task\s+(\d+[a-z]?):\s*(.+)$/
 const CHECKBOX = /^\s*[-*]\s+\[([ xX])\]\s+(.+)$/
 const NUMBERED = /^(\d+)\.\s+(?:\[([ xX])\]\s+)?(.+)$/
 
@@ -41,6 +41,8 @@ const withCurrent = (items: Array<{ label: string; done: boolean; n?: string }>,
 /** Re-read plan keeps what was done: finishing a branch drops the SDD ledger */
 export const keepCompleted = (prev: Task[], next: Task[]): Task[] => {
   const done = new Set(prev.filter(t => t.status === 'completed').map(t => t.label))
+  // the ledger already named what runs now (dispatched): keep it, only carry done over
+  if (next.some(t => t.status === 'in_progress' && !done.has(t.label))) return next.map(t => (done.has(t.label) ? { ...t, status: 'completed' as const } : t))
   return withCurrent(
     next.map(t => ({ label: t.label, n: t.n, done: t.status === 'completed' || done.has(t.label) })),
     next.some(t => t.status !== 'pending') || next.some(t => done.has(t.label)),
@@ -50,7 +52,7 @@ export const keepCompleted = (prev: Task[], next: Task[]): Task[] => {
 export const parsePlan = (text: string, ledger?: string): Task[] => {
   const lines = planLines(text)
 
-  // superpowers: `### Task N:` headings, steps beneath, ledger lines `Task N: complete`
+  // superpowers: `### Task N:` headings (a task added mid-run reads `3b`), steps beneath; 7.0.1 ledger lines may be list items: `- Task N: complete`, `- Task N: dispatched`
   const tasks: Array<{ n: string; label: string; steps: boolean[] }> = []
   for (const line of lines) {
     const h = TASK_HEADING.exec(line)
@@ -61,12 +63,14 @@ export const parsePlan = (text: string, ledger?: string): Task[] => {
     }
   }
   if (tasks.length > 0) {
-    const logged = new Set([...(ledger ?? '').matchAll(/^Task (\d+): complete/gm)].map(m => m[1]))
-    const started = logged.size > 0 || tasks.some(t => t.steps.some(Boolean))
-    return withCurrent(
-      tasks.map(t => ({ label: t.label, n: t.n, done: logged.has(t.n) || (t.steps.length > 0 && t.steps.every(Boolean)) })),
-      started,
-    )
+    const lines = [...(ledger ?? '').matchAll(/^[\s>*+-]*(?:\*\*)?Task\s+(\d+[a-z]?):\s*(complete(?=\s*(?:[(*.]|$))|dispatched\b)/gim)]
+    const logged = new Set(lines.filter(m => m[2]!.toLowerCase() === 'complete').map(m => m[1]))
+    const items = tasks.map(t => ({ label: t.label, n: t.n, done: logged.has(t.n) || (t.steps.length > 0 && t.steps.every(Boolean)) }))
+    // a dispatched task still open is what runs now; several when dispatched in parallel
+    const running = new Set(lines.filter(m => m[2]!.toLowerCase() === 'dispatched').map(m => m[1]).filter(n => items.some(i => i.n === n && !i.done)))
+    if (running.size > 0)
+      return items.map(i => ({ status: i.done ? 'completed' : running.has(i.n) ? 'in_progress' : 'pending', label: i.label, n: i.n }))
+    return withCurrent(items, logged.size > 0 || tasks.some(t => t.steps.some(Boolean)))
   }
 
   // plan mode: checkboxes, else top-level numbered items (ticked as `1. [x]`)

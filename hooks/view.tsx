@@ -143,6 +143,45 @@ const planNow = ({ Text }: UI, list: Task[], doneAt: number | null, v: Frame) =>
   )
 }
 
+// ---- the running superpowers task: a bright cell sweeps its line, its agent's phase on the right
+const GAP = 8
+/** Runs of `text` by tone: the bright cell at `f`'s place, ±2 lighter, the rest base; `GAP` cells off-text between sweeps */
+export const shimmer = (text: string, f: number) => {
+  const at = (f % (text.length + GAP)) - GAP / 2
+  const runs: Array<{ text: string; tone: 'hi' | 'mid' | 'base' }> = []
+  for (const [i, ch] of [...text].entries()) {
+    const d = Math.abs(i - at)
+    const tone = d === 0 ? 'hi' : d <= 2 ? 'mid' : 'base'
+    const last = runs.at(-1)
+    if (last?.tone === tone) last.text += ch
+    else runs.push({ text: ch, tone })
+  }
+  return runs
+}
+const TONE = { hi: '#fff3c4', mid: '#f0cf6e', base: 'yellow' } as const
+
+/** SDD names its fix loop in the label; the role says the rest */
+export const phaseOf = (r: AgentRun) => (/^fix\b/i.test(r.label) ? 'fix' : /^re-review/i.test(r.label) ? 're-review' : (r.role ?? ''))
+
+const spNow = (ui: UI, list: Task[], doneAt: number | null, runs: AgentRun[], v: Frame) => {
+  const active = list.filter(t => t.status === 'in_progress')
+  if (active.length !== 1) return planNow(ui, list, doneAt, v)
+  const { Text } = ui
+  const task = active[0]!
+  const run = runs.filter(r => r.role && r.taskN === task.n && (r.status === 'running' || r.status === 'waiting')).sort((x, y) => y.n - x.n)[0]
+  const icon = v.busy ? v.spin : '▸'
+  const line = run ? lineUp(icon, numbered(task), ` ${phaseOf(run)} ${mmss(v.now - run.startedAt)}`, v.W, ' ') : `${icon} ${numbered(task)}`
+  return v.busy ? (
+    <Text key="now" wrap="truncate">
+      {shimmer(line, v.f).map((r, i) => (
+        <Text key={String(i)} color={TONE[r.tone]} bold={r.tone === 'hi'}>{r.text}</Text>
+      ))}
+    </Text>
+  ) : (
+    <Text key="now" color="yellow" wrap="truncate">{line}</Text>
+  )
+}
+
 export const progressLines = (ui: UI, list: Task[], doneAt: number | null, v: Frame) => {
   const { Text } = ui
   const total = list.length
@@ -269,8 +308,8 @@ export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame
       </Box>
       {pipeline(sp).flatMap(s => [
         row(s),
-        ...(s.stage === 'execute' && plan.length > 0 ? [nested('now', planNow(ui, plan, sp.doneAt, inner))] : []),
-        ...rolesOf(s.stage),
+        ...(s.stage === 'execute' && plan.length > 0 ? [nested('now', spNow(ui, plan, sp.doneAt, runs, inner))] : []),
+        ...(s.state === 'current' ? roles : []),
       ])}
       {sp.extras.length > 0 ? <Text dimColor wrap="truncate">{sp.extras.map(x => `+ ${x}`).join('  ')}</Text> : null}
     </Box>

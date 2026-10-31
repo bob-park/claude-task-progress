@@ -87,3 +87,48 @@ test('keepCompleted: a task done before stays done when the ledger is gone', () 
     { status: 'in_progress', label: 'C', n: '3' },
   ])
 })
+
+test('7.0.1 ledger: bulleted lines, dispatched marks current, lettered tasks', () => {
+  const plan = '### Task 1: A\n- [ ] s\n### Task 2: B\n- [ ] s\n### Task 3: C\n- [ ] s\n### Task 3b: Worker\n- [ ] s\n### Task 4: D\n- [ ] s\n### Task 10: J\n- [ ] s'
+  const ledger = [
+    '# SDD ledger — plan: x',
+    '## Progress',
+    '- Task 1: dispatched (base dd8d49c)',
+    '- Task 1: minor (deferred): unused import',
+    '- Task 1: complete (commits a..b, review clean)',
+    '* Task 2: complete (commits b..c)',
+    '> **Task 3: complete** (commits c..d)',
+    '- Task 3b: dispatched (base f4171f5, opus)',
+    '- Task 4: implementer DONE_WITH_CONCERNS',
+  ].join('\n')
+  expect(parsePlan(plan, ledger).map(t => `${t.n} ${t.status}`)).toEqual(['1 completed', '2 completed', '3 completed', '3b in_progress', '4 pending', '10 pending'])
+})
+
+test('7.0.1 ledger: a dispatched task without completions is current; complete never leaks to 10 or 1b', () => {
+  const plan = '### Task 1: A\n- [ ] s\n### Task 1b: A2\n- [ ] s\n### Task 10: J\n- [ ] s'
+  expect(parsePlan(plan, '- Task 10: dispatched').map(t => t.status)).toEqual(['pending', 'pending', 'in_progress'])
+  expect(parsePlan(plan, '- Task 1: complete').map(t => t.status)).toEqual(['completed', 'in_progress', 'pending'])
+})
+
+test('lettered task keeps its own steps', () => {
+  expect(parsePlan('### Task 3: C\n- [x] a\n### Task 3b: W\n- [ ] b').map(t => `${t.n} ${t.status}`)).toEqual(['3 completed', '3b in_progress'])
+})
+
+test('keepCompleted keeps the dispatched task current: a mid-run task at the end, parallel dispatch', () => {
+  const plan = '### Task 1: A\n- [ ] s\n### Task 2: B\n- [ ] s\n### Task 3: C\n- [ ] s\n### Task 4: D\n- [ ] s\n### Task 3b: W\n- [ ] s'
+  const late = parsePlan(plan, '- Task 1: complete\n- Task 2: complete\n- Task 3: complete\n- Task 3b: dispatched')
+  expect(keepCompleted(late, late).map(t => `${t.n} ${t.status}`)).toEqual(['1 completed', '2 completed', '3 completed', '4 pending', '3b in_progress'])
+  const parallel = parsePlan(plan, '- Task 1: complete\n- Task 3: dispatched\n- Task 4: dispatched')
+  expect(keepCompleted(parallel, parallel).map(t => t.status)).toEqual(['completed', 'pending', 'in_progress', 'in_progress', 'pending'])
+  // a task done before the ledger went away stays done, even if it was the dispatched one
+  const gone = parsePlan(plan, '- Task 3b: dispatched')
+  const before = parsePlan(plan, '- Task 1: complete\n- Task 2: complete\n- Task 3: complete\n- Task 4: complete\n- Task 3b: complete')
+  expect(keepCompleted(before, gone).every(t => t.status === 'completed')).toBe(true)
+})
+
+test('a ledger note that only starts with complete is not a completion', () => {
+  const plan = '### Task 1: A\n- [ ] s\n### Task 2: B\n- [ ] s'
+  expect(parsePlan(plan, '- Task 2: complete rewrite of X requested by reviewer').map(t => t.status)).toEqual(['pending', 'pending'])
+  expect(parsePlan(plan, '- Task 1: complete\n- **Task 2: complete**').map(t => t.status)).toEqual(['completed', 'completed'])
+  expect(parsePlan(plan, 'Task 1: complete (commits a..b, tests: t → ok)\nTask 2: complete.').map(t => t.status)).toEqual(['completed', 'completed'])
+})
