@@ -79,4 +79,4 @@ shows `○ 다음: #1` until the first completion.
 ## Left to the builder
 
 - Exact highlight colors and gap length.
-- Version bump (minor: 0.9.0) and README line for the phase.
+- README line for the phase. Version: patch only, 0.8.1 (the user's decision).
