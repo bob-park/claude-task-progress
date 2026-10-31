@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { Activity, AgentRun, Main, Sp, Task } from '../types'
-import { fitTail, pipeline, stageTimes } from './superpowers'
+import type { Activity, AgentRun, Main, Sp, Stage, Task } from '../types'
+import { fitTail, pipeline, stageOfRun, stageTimes } from './superpowers'
 import type { Step } from './superpowers'
 
 /** `$.ui.resolve(e)`: the surface's Box, Text, ... */
@@ -239,8 +239,8 @@ export const agentsPanel = (ui: UI, all: AgentRun[], v: Frame) => {
   )
 }
 
-// ---- superpowers: path badge, then a timeline: a row per stage with its time; the plan sits on execute, its agents under the current stage
-const ROLES_SHOWN = 4
+// ---- superpowers: path badge, then a timeline: a row per stage with its time; the plan sits on execute, its agents under the stage they started in
+const ROLES_SHOWN = 5
 const STAGE_COLOR = { done: 'green', current: 'yellow', todo: undefined } as const
 export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame) => {
   const { Box, Text } = ui
@@ -254,12 +254,14 @@ export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame
       {row}
     </Box>
   )
-  // working ones first, then the latest: SDD runs one at a time, so that is where it is now
-  const roles = runs
-    .filter(r => r.role)
-    .sort((x, y) => Number(y.status === 'running' || y.status === 'waiting') - Number(x.status === 'running' || x.status === 'waiting') || y.n - x.n)
-    .slice(0, ROLES_SHOWN)
-    .map(r =>
+  // each stage keeps the agents that ran in it: working ones first, then ones with issues, then the latest
+  const working = (r: AgentRun) => r.status === 'running' || r.status === 'waiting'
+  const trouble = (r: AgentRun) => r.verdict === 'issues' || r.status === 'failed'
+  const rolesOf = (stage: Stage) => {
+    const mine = runs
+      .filter(r => r.role && stageOfRun(sp, r.startedAt) === stage)
+      .sort((x, y) => Number(working(y)) - Number(working(x)) || Number(trouble(y)) - Number(trouble(x)) || y.n - x.n)
+    const rows = mine.slice(0, ROLES_SHOWN).map(r =>
       nested(
         `role${r.n}`,
         agentRow(
@@ -273,6 +275,9 @@ export const spPanel = (ui: UI, sp: Sp, plan: Task[], runs: AgentRun[], v: Frame
         ),
       ),
     )
+    const rest = mine.length - rows.length
+    return rest > 0 ? [...rows, nested(`more${stage}`, <Text dimColor>{`  … ${rest} more`}</Text>)] : rows
+  }
   const row = ({ stage, state }: Step) => {
     const ms = times[stage]
     const time = ms === undefined ? '' : ` ${dur(ms)}`

@@ -10,12 +10,14 @@ Claude Code mod: a pane docked to the right of the transcript that monitors any 
    - under the current stage, its agents by role, working ones first: `impl #4  Haiku 5.5 01:12`, `review #3  approved 00:41` (`⚠ … issues` when the review wants fixes); fix agents count as impl, brainstorming's builder check as a review
    - the stage only moves forward: review waits until every plan task is done, and a skill a subagent loads never moves it
    - extras used along the way: `+ tdd  + debugging  + verification`
-3. **TASKS** — todos (TodoWrite / TaskCreate), else a plan-mode plan (`~/.claude/plans/*.md`, its `- [ ]` checkboxes, else its numbered steps ticked as `1. [x]`): progress bar with `done/total · %` beside it, in-progress tasks in yellow, the current step below with its number (`▸ #2 Wiring`), and `✓ completed · 26.10.09 PM 02:05` once every task is done
+3. **TASKS** — todos (TodoWrite / TaskCreate), else a plan-mode plan (`~/.claude/plans/*.md`, its `- [ ]` checkboxes, else its numbered steps ticked as `1. [x]`): progress bar with `done/total · %` beside it, in-progress tasks in yellow, the current step below with its number (`▸ #2 Wiring`), or the next one (`○ 다음: …`) when none has started, and `✓ completed · 26.10.09 PM 02:05` once every task is done
 4. **AGENTS** — every other subagent as `1: Explore auth --- Haiku 5.5 01:23`, running ones first (⏸ when waiting on its own background work), then the latest 3 that ended (`✓` done, `✗` failed) with their final time. The header counts all agents: `2 running · 5 done · 1 failed`
 5. **SKILLS** — every skill run, in order: `brainstorming → writing-plans → subagent-driven-development`
 6. **ACTIVITY** — the main loop's latest 3 tool calls: `14:05 ⠹ Bash · Run tests`, `✓` once done, `✗` on error
 
 While Claude or an agent works, spinners turn and a bright cell sweeps the in-progress part of each progress bar.
+
+The demo runs a mock superpowers cycle in the same session that is being watched (a notification-settings page: brainstorm → spec → plan → 10 plan tasks, one impl subagent each, kept under execute as the latest 5 and `… 5 more`; a whole-branch review that asks for fixes and a fix agent under review; then finish), sped up 8×:
 
 ![task-progress demo](docs/images/task-progress.gif)
 

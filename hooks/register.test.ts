@@ -236,19 +236,19 @@ test('agents list below the tasks: num, label, model and mm:ss', async ($, on) =
   expect(await ui.find({ text: /^✓ 1: Explore auth / })).toBeDefined()
 })
 
-test('agents show the latest 3 ended ones, and keep at most 20', async ($, on) => {
+test('agents show the latest 3 ended ones, and keep at most 50', async ($, on) => {
   const clock = mock.clock(on)
   let k = 0
   on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: `A${++k}` }))
   on('turn.complete', () => ({ text: '' }))
-  for (let i = 1; i <= 22; i++) {
+  for (let i = 1; i <= 52; i++) {
     await $.agent.spawn({ prompt: 'p', description: `Job ${i}` } as never)
     await clock.advance(1000)
     await $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'T', agentId: `A${i}`, reason: 'answer' } as never)
   }
   const ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
-  expect(await ui.find({ text: /^  0 running · 20 done$/ })).toBeDefined()
-  expect((await ui.findAll({ text: /^✓ \d+: / })).map(r => r.text.split(' -')[0])).toEqual(['✓ 22: Job 22', '✓ 21: Job 21', '✓ 20: Job 20'])
+  expect(await ui.find({ text: /^  0 running · 50 done$/ })).toBeDefined()
+  expect((await ui.findAll({ text: /^✓ \d+: / })).map(r => r.text.split(' -')[0])).toEqual(['✓ 52: Job 52', '✓ 51: Job 51', '✓ 50: Job 50'])
 })
 
 test('a TaskCreate task shows its number on the current line', async ($, on) => {
@@ -522,6 +522,7 @@ test('a running role agent without a task number stays in view after many tasks'
     '✓ review #3',
     '✓ impl #3',
     '✓ review #2',
+    '✓ impl #2',
   ])
 })
 

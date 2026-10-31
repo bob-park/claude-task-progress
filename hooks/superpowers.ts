@@ -57,6 +57,12 @@ export const stageTimes = (sp: Sp, now: number) => {
   return times
 }
 
+/** The stage an agent ran in: the latest in order already started by its start (stages only move forward; one reached out of order never takes the next one's agents). Before stage times (0.7), the current one; before the cycle, none */
+export const stageOfRun = (sp: Sp, startedAt: number): Stage | undefined => {
+  if (Object.keys(sp.at).length === 0) return sp.current
+  return ORDER.findLast(s => sp.stages.includes(s) && (sp.at[s] ?? Infinity) <= startedAt)
+}
+
 export const addExtra = (sp: Sp, extra: string): Sp => (sp.extras.includes(extra) ? sp : { ...sp, extras: [...sp.extras, extra] })
 
 // 7.0.1 sizes the work in plain words (a small change, a project) or names a spike; 6.4.1 named three paths

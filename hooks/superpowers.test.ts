@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Sp } from '../types'
-import { addExtra, EMPTY_SP, extraOf, fitTail, pathFrom, pipeline, reach, roleOf, sizeUp, skillName, stageOf, stageTimes, taskNOf, verdictOf, withAt } from './superpowers'
+import { addExtra, EMPTY_SP, extraOf, fitTail, pathFrom, pipeline, reach, roleOf, sizeUp, skillName, stageOf, stageOfRun, stageTimes, taskNOf, verdictOf, withAt } from './superpowers'
 
 test('skill names map to stages and extras, prefixed or bare', () => {
   expect(skillName('superpowers:brainstorming')).toBe('brainstorming')
@@ -116,4 +116,20 @@ test('fitTail keeps the latest parts behind a lead', () => {
   expect(fitTail(['✓brainstorm', '✓plan', '●execute'], ' ', 17, '✓…')).toBe('✓… ✓plan ●execute')
   // only the first `droppable` parts may fold: the current stage and later ones always stay
   expect(fitTail(['✓aa', '✓bb', '●cccc', '○dddd'], ' ', 10, '✓…', 2)).toBe('✓… ●cccc ○dddd')
+})
+
+test('an agent belongs to the latest stage started by its start, a tie to the later stage', () => {
+  const sp: Sp = { ...EMPTY_SP, stages: ['brainstorm', 'spec', 'plan', 'execute', 'review'], current: 'review', at: { brainstorm: 10, spec: 20, plan: 30, execute: 30, review: 50 } }
+  expect(stageOfRun(sp, 15)).toBe('brainstorm')
+  expect(stageOfRun(sp, 30)).toBe('execute') // plan and execute at the same ms
+  expect(stageOfRun(sp, 49)).toBe('execute')
+  expect(stageOfRun(sp, 60)).toBe('review')
+  expect(stageOfRun(sp, 5)).toBeUndefined() // before this cycle
+  expect(stageOfRun({ ...sp, at: {} }, 5)).toBe('review') // saved before stage times: the current stage
+})
+
+test('a stage reached out of order (SDD sets up a worktree) never takes the agents of the stage after it', () => {
+  let sp = reach(reach(EMPTY_SP, 'brainstorm', 10), 'execute', 20)
+  sp = reach(sp, 'worktree', 30)
+  expect(stageOfRun(sp, 40)).toBe('execute')
 })
