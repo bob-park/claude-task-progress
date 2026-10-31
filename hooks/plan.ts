@@ -41,6 +41,8 @@ const withCurrent = (items: Array<{ label: string; done: boolean; n?: string }>,
 /** Re-read plan keeps what was done: finishing a branch drops the SDD ledger */
 export const keepCompleted = (prev: Task[], next: Task[]): Task[] => {
   const done = new Set(prev.filter(t => t.status === 'completed').map(t => t.label))
+  // the ledger already named what runs now (dispatched): keep it, only carry done over
+  if (next.some(t => t.status === 'in_progress' && !done.has(t.label))) return next.map(t => (done.has(t.label) ? { ...t, status: 'completed' as const } : t))
   return withCurrent(
     next.map(t => ({ label: t.label, n: t.n, done: t.status === 'completed' || done.has(t.label) })),
     next.some(t => t.status !== 'pending') || next.some(t => done.has(t.label)),
@@ -61,7 +63,7 @@ export const parsePlan = (text: string, ledger?: string): Task[] => {
     }
   }
   if (tasks.length > 0) {
-    const lines = [...(ledger ?? '').matchAll(/^[\s>*+-]*(?:\*\*)?Task\s+(\d+[a-z]?):\s*(complete|dispatched)\b/gim)]
+    const lines = [...(ledger ?? '').matchAll(/^[\s>*+-]*(?:\*\*)?Task\s+(\d+[a-z]?):\s*(complete(?=\s*(?:[(*.]|$))|dispatched\b)/gim)]
     const logged = new Set(lines.filter(m => m[2]!.toLowerCase() === 'complete').map(m => m[1]))
     const items = tasks.map(t => ({ label: t.label, n: t.n, done: logged.has(t.n) || (t.steps.length > 0 && t.steps.every(Boolean)) }))
     // a dispatched task still open is what runs now; several when dispatched in parallel
