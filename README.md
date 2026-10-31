@@ -6,7 +6,7 @@ Claude Code mod: a pane docked to the right of the transcript that monitors any 
 2. **⚡ SUPERPOWERS** — shows once a superpowers skill runs (or a superpowers plan is opened):
    - how big the work is (superpowers 7.0.1): `SMALL` for "a small change" / "작은 변경", `PROJECT` for "a project", `SPIKE` for a spike; it only steps up (6.4.1's `bounded` / `architectural` show as `SMALL` / `PROJECT`)
    - a timeline, one row per stage with how long it took: `✓ brainstorm 04:10`, `⠹ execute ███▓▓░░ 3/7 05:02`, `○ review`. Small changes and projects (or any cycle that wrote a spec or plan) show every stage ahead; `worktree` joins once reached; `finish` and stages reached out of order show no time
-   - on the execute row, the plan's progress bar (`docs/superpowers/plans/*.md`, `### Task N:` headings, completed by the SDD ledger or ticked steps); below it the current task, or when it all finished
+   - on the execute row, the plan's progress bar (`docs/superpowers/plans/*.md`, `### Task N:` headings, completed by the SDD ledger — `Task N: complete`, list items too — or ticked steps); below it the current task (the ledger's `Task N: dispatched` one), a highlight sweeping across it while it works and its running agent's phase on the right: `⠹ #4 Add verdict parser   review 00:41` (`impl`, `review`, `fix`, `re-review`), or when it all finished
    - under the current stage, its agents by role, working ones first: `impl #4  Haiku 5.5 01:12`, `review #3  approved 00:41` (`⚠ … issues` when the review wants fixes); fix agents count as impl, brainstorming's builder check as a review
    - the stage only moves forward: review waits until every plan task is done, and a skill a subagent loads never moves it
    - extras used along the way: `+ tdd  + debugging  + verification`

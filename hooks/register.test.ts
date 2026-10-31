@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { AgentRun } from '../types'
 import { pushActivity, withStatus } from './register'
-import { doneTime, dur } from './view'
+import { doneTime, dur, phaseOf, shimmer } from './view'
 
 const pane = {
   plugin: 'task-progress',
@@ -623,4 +623,51 @@ test("7.0.0 brainstorming's builder check shows as a review under superpowers", 
 test('dur reads mm:ss, then h:mm:ss from an hour', () => {
   expect(dur(65_000)).toBe('01:05')
   expect(dur(3_725_000)).toBe('1:02:05')
+})
+
+test('shimmer: the bright cell walks across the text and merges runs', () => {
+  const tones = (f: number) => shimmer('abcdefghij', f).map(s => `${s.tone}:${s.text}`)
+  expect(tones(4)).toEqual(['hi:a', 'mid:bc', 'base:defghij'])
+  expect(tones(8)).toEqual(['base:ab', 'mid:cd', 'hi:e', 'mid:fg', 'base:hij'])
+  expect(tones(0)).toEqual(['base:abcdefghij']) // inside the gap
+  expect(shimmer('abcdefghij', 8).map(s => s.text).join('')).toBe('abcdefghij')
+})
+
+test('phaseOf reads fix and re-review from the label', () => {
+  const run = (label: string, role: 'impl' | 'review') => ({ n: 1, label, model: '', startedAt: 0, status: 'running' as const, role })
+  expect(phaseOf(run('Implement Task 2: x', 'impl'))).toBe('impl')
+  expect(phaseOf(run('Fix Task 2 review findings', 'impl'))).toBe('fix')
+  expect(phaseOf(run('Review Task 2 (spec + quality)', 'review'))).toBe('review')
+  expect(phaseOf(run('Re-review Task 2 fixes', 'review'))).toBe('re-review')
+})
+
+test('the current task line ends with the phase of its running agent', async ($, on) => {
+  mock.clock(on)
+  const files: Record<string, string> = {
+    [SP]: '### Task 1: A\n- [ ] a\n### Task 2: Wire it\n- [ ] b\n### Task 3: C\n- [ ] c\n',
+    [LEDGER]: '# SDD ledger — plan: docs/superpowers/plans/2026-01-01-x.md\n- Task 1: complete (x)\n- Task 2: dispatched\n',
+  }
+  on('fs.read', (_$, e) => (e.path in files ? { value: files[e.path]! } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('skill.prompt', () => ({ text: '' }))
+  const ids: Record<string, string> = { 'Implement Task 2: Wire it': 'I2', 'Review Task 2 (spec + quality)': 'R2' }
+  on('agent.spawn', (_$, e) => ({ model: 'claude-haiku-5-5', agentId: ids[e.description] }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+
+  let ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^ 1\/3$/ })).toBeDefined()
+  expect(await ui.find({ text: /^▸ #2 Wire it$/ })).toBeDefined() // idle: no shimmer spinner, no phase yet
+  await ui.unmount()
+
+  await $.agent.spawn({ prompt: 'p', description: 'Implement Task 2: Wire it' } as never)
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] #2 Wire it +impl 00:00$/ })).toBeDefined()
+  await ui.unmount()
+
+  await $.turn.complete({ ...(sdd('DONE') as object), agentId: 'I2' } as never)
+  await $.agent.spawn({ prompt: 'p', description: 'Review Task 2 (spec + quality)' } as never)
+  ui = await $.ui.mount({ ...pane, surface: 'terminal' } as never)
+  expect(await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] #2 Wire it +review 00:00$/ })).toBeDefined()
 })
