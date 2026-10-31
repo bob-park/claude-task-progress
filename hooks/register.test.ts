@@ -698,3 +698,50 @@ test('a long current task is cut to the pane before it shimmers', async ($, on) 
   line = await ui.find({ text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] #2 Wire.*…$/ })
   expect(line?.text.length).toBe(22)
 })
+
+test('each stage keeps its agents: issues first, 5 rows, then … more', async ($, on) => {
+  const clock = mock.clock(on)
+  let k = 0
+  on('fs.read', (_$, e) => (e.path === SP ? { value: [1, 2, 3, 4, 5, 6].map(n => `### Task ${n}: T\n- [x] a\n`).join('') } : { deny: `ENOENT: ${e.path}` }))
+  on('tool.call', () => ({ result: {} }) as never)
+  on('skill.prompt', () => ({ text: '' }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: `A${++k}` }))
+  on('turn.complete', () => ({ text: '' }))
+  const done = (answer = '') => $.turn.complete({ ...(sdd(answer) as object), agentId: `A${k}` } as never)
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: '' })
+  await $.agent.spawn({ prompt: 'p', description: 'Builder check' } as never)
+  await done('nothing important left')
+  await clock.advance(1000)
+  await $.tool.call({ tool: 'Write', file_path: SP, content: '' } as never)
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  for (let n = 1; n <= 6; n++) {
+    await $.agent.spawn({ prompt: 'p', description: `Implement Task ${n}: x` } as never)
+    await done()
+    await $.agent.spawn({ prompt: 'p', description: `Review Task ${n} (spec + quality)` } as never)
+    await done(n === 1 ? '**Task quality:** Needs fixes' : 'Approved')
+  }
+  await clock.advance(1000)
+  await $.agent.spawn({ prompt: 'p', description: 'Review code changes' } as never)
+  await done('Approved')
+  await clock.advance(1000)
+  await $.skill.prompt({ skill: 'superpowers:finishing-a-development-branch', text: '' })
+  const ui = await $.ui.mount({ ...pane, props: { ...pane.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' } as never)
+  const rows = (await ui.findAll({ text: /^(. (brainstorm|spec|plan|execute|review|finish)\b|. (impl|review) |  … \d+ more$)/ })).map(r => r.text.trim().split(/ {2,}/)[0])
+  expect(rows).toEqual([
+    '✓ brainstorm',
+    '✓ review Builder c…',
+    '✓ spec',
+    '✓ plan',
+    expect.stringMatching(/^✓ execute █+ 6\/6 /),
+    '✓ execute', // the execute row's label part
+    '⚠ review #1',
+    '✓ review #6',
+    '✓ impl #6',
+    '✓ review #5',
+    '✓ impl #5',
+    '… 7 more',
+    '✓ review',
+    expect.stringMatching(/^✓ review Review c/),
+    expect.stringMatching(/^. finish$/),
+  ])
+})
